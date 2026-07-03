@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Costlens · feature</title>
+  <link rel="stylesheet" href="/vendor/uplot.min.css" />
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
@@ -11,6 +12,7 @@
     <a class="back" href="/">← back</a>
     <h1 id="feature-name">…</h1>
     <span id="feature-status" class="badge">…</span>
+    <span class="status" id="conn-status" title="Connection status">…</span>
     <button id="refresh" type="button">↻ Refresh</button>
   </header>
 
@@ -53,13 +55,18 @@
       <ul id="notes-list"></ul>
     </section>
 
-    <section class="card placeholder">
+    <section class="card">
       <h2>Cost over time</h2>
-      <p class="muted">Chart coming in the next step — uPlot integration.</p>
-      <table id="timeline">
-        <thead><tr><th>Timestamp</th><th>Model</th><th class="num">In</th><th class="num">Out</th><th class="num">Cost</th></tr></thead>
-        <tbody></tbody>
-      </table>
+      <div id="timeline-chart" class="chart"></div>
+      <details class="chart-details">
+        <summary>recent messages</summary>
+        <div class="table-wrap">
+          <table id="timeline">
+            <thead><tr><th>Timestamp</th><th>Model</th><th class="num">In</th><th class="num">Out</th><th class="num">Cost</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </details>
     </section>
   </main>
 
@@ -67,6 +74,7 @@
     <span>Costlens v0.4.0 · auto-refresh every 5s</span>
   </footer>
 
+  <script src="/vendor/uplot.iife.min.js"></script>
   <script src="/feature.js"></script>
 </body>
 </html>

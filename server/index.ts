@@ -1,8 +1,8 @@
 /**
  * Costlens dashboard server (Bun).
  *
- * Step 4 of PHASE4.md: server + DB + JSON API + static HTML pages.
- * Step 5 (uPlot charts) comes next.
+ * Phase 4 of PHASE4.md: server + DB + JSON API + static HTML pages +
+ * uPlot charts + dark/light + error states + polling.
  *
  * Run manually:
  *   bun server/index.ts
@@ -10,10 +10,11 @@
  *
  * The extension spawns this via the `startServer` helper in
  * `extension/server.ts` with COSTLENS_HOME and COSTLENS_PORT set.
+ * If COSTLENS_PORT isn't set, we fall back to the configured port
+ * from `~/.pi/costlens/config.json` (default 7331).
  */
 
 import { join, dirname } from "node:path";
-import { homedir } from "node:os";
 import { openDb, closeDb } from "./db.js";
 import {
   handleFeatures,
@@ -23,17 +24,36 @@ import {
   handleOverview,
   type RouteContext,
 } from "./api.js";
+import { getCostlensHome, readConfig } from "./config.js";
+import { DEFAULT_PORT, findFreePort } from "./port.js";
 
-const COSTLENS_HOME = process.env.COSTLENS_HOME
-  ? join(process.env.COSTLENS_HOME, "costlens")
-  : join(homedir(), ".pi", "costlens");
+const COSTLENS_HOME = getCostlensHome();
 const DB_PATH = join(COSTLENS_HOME, "ledger.db");
-const REQUESTED_PORT = Number(process.env.COSTLENS_PORT) || 7331;
 const STARTED_AT = new Date().toISOString();
-const VERSION = "0.4.0-step4";
+const VERSION = "0.4.0";
 
 // Web assets live in server/web/ alongside this file.
 const WEB_DIR = join(dirname(import.meta.path), "web");
+
+// Decide which port to bind. Priority:
+//   1. COSTLENS_PORT env (the extension always sets this)
+//   2. The port from config.json
+//   3. The default 7331
+// If the chosen port is taken, fall through to the next free port in
+// the range. This keeps the manual `bun server/index.ts` flow usable
+// even when the extension's server is already running.
+const envPort = Number(process.env.COSTLENS_PORT);
+const configuredPort = readConfig().port;
+const preferredPort =
+  Number.isFinite(envPort) && envPort > 0 ? envPort : configuredPort || DEFAULT_PORT;
+
+const REQUESTED_PORT = (await findFreePort(preferredPort)) ?? preferredPort;
+
+if (REQUESTED_PORT !== preferredPort) {
+  console.warn(
+    `costlens-server: preferred port ${preferredPort} taken; using ${REQUESTED_PORT}`
+  );
+}
 
 // Open the DB up-front so we fail fast with a clear error if it's
 // missing, rather than 500-ing on the first request.
@@ -50,9 +70,22 @@ const MIME: Record<string, string> = {
 
 function serveStatic(path: string): Response {
   const file = Bun.file(path);
+  const ext = path.slice(path.lastIndexOf("."));
   return new Response(file, {
     headers: {
-      "content-type": MIME[path.slice(path.lastIndexOf("."))] ?? "application/octet-stream",
+      "content-type": MIME[ext] ?? "application/octet-stream",
+      "cache-control": "no-cache",
+    },
+  });
+}
+
+async function tryServeStatic(path: string): Promise<Response | null> {
+  const file = Bun.file(path);
+  if (!(await file.exists())) return null;
+  const ext = path.slice(path.lastIndexOf("."));
+  return new Response(file, {
+    headers: {
+      "content-type": MIME[ext] ?? "application/octet-stream",
       "cache-control": "no-cache",
     },
   });
@@ -60,7 +93,7 @@ function serveStatic(path: string): Response {
 
 const server = Bun.serve({
   port: REQUESTED_PORT,
-  fetch(req) {
+  async fetch(req) {
     const url = new URL(req.url);
     const path = url.pathname;
 
@@ -91,6 +124,10 @@ const server = Bun.serve({
       if (path === "/style.css") return serveStatic(join(WEB_DIR, "style.css"));
       if (path === "/overview.js") return serveStatic(join(WEB_DIR, "overview.js"));
       if (path === "/feature.js") return serveStatic(join(WEB_DIR, "feature.js"));
+      if (path.startsWith("/vendor/")) {
+        const r = await tryServeStatic(join(WEB_DIR, path));
+        if (r) return r;
+      }
 
       return new Response("Not found", { status: 404 });
     } catch (err) {

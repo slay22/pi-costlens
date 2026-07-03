@@ -11,6 +11,11 @@
 
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { getCostlensHome } from "./config.js";
+
+const COSTLENS_HOME = getCostlensHome();
+export const DB_PATH = join(COSTLENS_HOME, "ledger.db");
 
 export type Feature = {
   id: string;
@@ -78,13 +83,16 @@ export type Overview = {
 
 let _db: Database | null = null;
 
-export function openDb(path: string): Database {
+export function openDb(path: string = DB_PATH): Database {
   if (_db) return _db;
   if (!existsSync(path)) {
     throw new Error(
       `Costlens DB not found at ${path}; has the extension been run yet?`
     );
   }
+  // `readonly: true` so the server can never write. (Bun's
+  // DatabaseSync doesn't accept `fileMustExist` — if the path is wrong
+  // or missing, the open call will throw with a clear error.)
   _db = new Database(path, { readonly: true });
   return _db;
 }
@@ -228,17 +236,29 @@ export function getOverview(): Overview {
       status: string;
     }>;
 
-  const byDay = db
+  // byDay covers the last 30 days; missing days are filled with zeros
+  // so the chart has a continuous x-axis.
+  const byDayRows = db
     .prepare(
       `SELECT date(timestamp) AS date,
               SUM(cost_usd)   AS cost,
               COUNT(*)        AS turns
        FROM messages
        WHERE timestamp >= date('now', '-30 days')
-       GROUP BY date(timestamp)
-       ORDER BY date ASC`
+       GROUP BY date(timestamp)`
     )
     .all() as Array<{ date: string; cost: number; turns: number }>;
+  const dayMap = new Map(byDayRows.map((r) => [r.date, r]));
+  const byDay: Array<{ date: string; cost: number; turns: number }> = [];
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(today);
+    d.setUTCDate(d.getUTCDate() - i);
+    const key = d.toISOString().slice(0, 10);
+    const row = dayMap.get(key);
+    byDay.push({ date: key, cost: row?.cost ?? 0, turns: row?.turns ?? 0 });
+  }
 
   const byModel = db
     .prepare(

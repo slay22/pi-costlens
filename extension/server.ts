@@ -20,6 +20,7 @@ import { homedir } from "node:os";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { getCostlensHome, readConfig } from "./config.js";
+import { findFreePort } from "../server/port.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -66,15 +67,6 @@ function serverScriptPath(): string {
   return join(here, "..", "server", "index.ts");
 }
 
-async function portInUse(port: number): Promise<boolean> {
-  try {
-    await execFileAsync("lsof", ["-ti", `tcp:${port}`], { timeout: 1000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export async function startServer(opts: { detach: boolean }): Promise<ServerHandle> {
   // If a detached server is already running, reuse it.
   if (existsSync(SERVER_PID_PATH)) {
@@ -100,9 +92,14 @@ export async function startServer(opts: { detach: boolean }): Promise<ServerHand
   }
 
   const config = readConfig();
-  if (await portInUse(config.port)) {
+  // Find a free port starting from the configured one. If the
+  // configured port is taken, fall through to the next free port in
+  // 7331..7399 so a half-orphaned server doesn't block the user.
+  const port = await findFreePort(config.port);
+  if (port == null) {
     throw new Error(
-      `Port ${config.port} is already in use. Either /feature set-port <N> to change it, or stop the other process.`
+      `No free port found in 7331..7399 starting from ${config.port}. ` +
+        `Use /feature set-port <N> to pick a different one.`
     );
   }
 
@@ -111,7 +108,7 @@ export async function startServer(opts: { detach: boolean }): Promise<ServerHand
     env: {
       ...process.env,
       COSTLENS_HOME: process.env.COSTLENS_HOME ?? join(homedir(), ".pi"),
-      COSTLENS_PORT: String(config.port),
+      COSTLENS_PORT: String(port),
     },
     detached: opts.detach,
     stdio: ["ignore", "pipe", "pipe"],
@@ -135,7 +132,7 @@ export async function startServer(opts: { detach: boolean }): Promise<ServerHand
 
   const handle: ServerHandle = {
     pid: child.pid ?? 0,
-    port: config.port,
+    port,
     detach: opts.detach,
     startedAt: new Date().toISOString(),
   };
@@ -148,14 +145,22 @@ export async function startServer(opts: { detach: boolean }): Promise<ServerHand
     child.unref();
   }
 
-  const ok = await waitForHealth(config.port);
+  const ok = await waitForHealth(port);
   if (!ok) {
     // Clean up the child we just spawned.
     try { child.kill("SIGKILL"); } catch {}
     _child = null;
     _handle = null;
     throw new Error(
-      `Server did not become healthy on port ${config.port} within 5s. Check that bun is on PATH.`
+      `Server did not become healthy on port ${port} within 5s. Check that bun is on PATH.`
+    );
+  }
+
+  // If we landed on a port other than the configured one, tell the
+  // user so they can update their config.
+  if (port !== config.port) {
+    process.stderr.write(
+      `[costlens-server] preferred port ${config.port} was taken; using ${port}\n`
     );
   }
 

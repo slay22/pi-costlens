@@ -8,6 +8,7 @@
   "scripts": {
     "test": "node --import tsx --test test/**/*.test.ts",
     "test:watch": "node --import tsx --test --watch test/**/*.test.ts",
+    "test:server": "bun test test/server.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

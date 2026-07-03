@@ -4,11 +4,13 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Costlens</title>
+  <link rel="stylesheet" href="/vendor/uplot.min.css" />
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
   <header>
     <h1>Costlens</h1>
+    <span class="status" id="conn-status" title="Connection status">…</span>
     <button id="refresh" type="button">↻ Refresh</button>
   </header>
 
@@ -34,30 +36,42 @@
 
     <section class="card">
       <h2>Top 5 features</h2>
-      <table id="top-features">
-        <thead>
-          <tr><th>Feature</th><th>Status</th><th class="num">Turns</th><th class="num">Cost</th></tr>
-        </thead>
-        <tbody></tbody>
-      </table>
+      <div class="table-wrap">
+        <table id="top-features">
+          <thead>
+            <tr><th>Feature</th><th>Status</th><th class="num">Turns</th><th class="num">Cost</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
     </section>
 
-    <section class="card placeholder">
+    <section class="card">
       <h2>Cost by day (last 30)</h2>
-      <p class="muted">Chart coming in the next step — uPlot integration.</p>
-      <table id="by-day">
-        <thead><tr><th>Date</th><th class="num">Turns</th><th class="num">Cost</th></tr></thead>
-        <tbody></tbody>
-      </table>
+      <div id="by-day-chart" class="chart"></div>
+      <details class="chart-details">
+        <summary>data</summary>
+        <div class="table-wrap">
+          <table id="by-day">
+            <thead><tr><th>Date</th><th class="num">Turns</th><th class="num">Cost</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </details>
     </section>
 
-    <section class="card placeholder">
+    <section class="card">
       <h2>Cost by model</h2>
-      <p class="muted">Chart coming in the next step — uPlot integration.</p>
-      <table id="by-model">
-        <thead><tr><th>Model</th><th class="num">Turns</th><th class="num">In</th><th class="num">Out</th><th class="num">Cost</th></tr></thead>
-        <tbody></tbody>
-      </table>
+      <div id="by-model-chart" class="chart"></div>
+      <details class="chart-details">
+        <summary>data</summary>
+        <div class="table-wrap">
+          <table id="by-model">
+            <thead><tr><th>Model</th><th class="num">Turns</th><th class="num">In</th><th class="num">Out</th><th class="num">Cost</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </details>
     </section>
 
     <section class="card">
@@ -70,6 +84,7 @@
     <span>Costlens v0.4.0 · dogfooded on <code id="current-feature">—</code></span>
   </footer>
 
+  <script src="/vendor/uplot.iife.min.js"></script>
   <script src="/overview.js"></script>
 </body>
 </html>

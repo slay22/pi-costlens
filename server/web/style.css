@@ -1,4 +1,4 @@
-/* Costlens dashboard — minimal vanilla CSS. */
+/* Costlens dashboard — minimal vanilla CSS with dark/light auto. */
 
 :root {
   --bg: #0f1115;
@@ -12,6 +12,26 @@
   --high: #ffd166;
   --over: #ff6b6b;
   --link: #7cb7ff;
+  --error-bg: rgba(255, 107, 107, 0.12);
+  --error-border: rgba(255, 107, 107, 0.4);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #fafbfc;
+    --surface: #ffffff;
+    --surface-2: #f1f3f5;
+    --border: #e1e4e8;
+    --text: #1f2328;
+    --text-dim: #6a737d;
+    --accent: #22863a;
+    --warn: #b08800;
+    --high: #b58900;
+    --over: #d73a49;
+    --link: #0366d6;
+    --error-bg: rgba(215, 58, 73, 0.08);
+    --error-border: rgba(215, 58, 73, 0.35);
+  }
 }
 
 * { box-sizing: border-box; }
@@ -50,6 +70,20 @@ header .back {
   font-size: 13px;
 }
 
+header .status {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+header .status.ok { color: var(--accent); }
+header .status.loading { color: var(--text-dim); }
+header .status.error { color: var(--over); background: var(--error-bg); }
+
 main {
   max-width: 960px;
   margin: 0 auto;
@@ -59,15 +93,24 @@ main {
   gap: 16px;
 }
 
+.banner {
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+}
+.banner.error {
+  background: var(--error-bg);
+  border-color: var(--error-border);
+  color: var(--over);
+}
+.banner a { color: inherit; }
+
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 16px 20px;
-}
-
-.card.placeholder {
-  opacity: 0.85;
 }
 
 .card h2 {
@@ -87,7 +130,7 @@ button {
   padding: 6px 12px;
   font: inherit;
   cursor: pointer;
-  margin-left: auto;
+  margin-left: 8px;
 }
 
 button:hover {
@@ -129,6 +172,11 @@ button:hover {
 .stat .value.near-cap { color: var(--high); }
 .stat .value.warn-cap { color: var(--warn); }
 .stat .value.ok { color: var(--accent); }
+
+.table-wrap {
+  overflow-x: auto;
+  max-width: 100%;
+}
 
 table {
   width: 100%;
@@ -177,6 +225,16 @@ tr:last-child td {
 .badge.complete { background: rgba(93, 211, 158, 0.15); color: var(--accent); }
 .badge.partial { background: rgba(245, 180, 84, 0.15); color: var(--warn); }
 .badge.unknown { background: rgba(255, 107, 107, 0.15); color: var(--over); }
+
+@media (prefers-color-scheme: light) {
+  .badge.open { background: rgba(34, 134, 58, 0.12); }
+  .badge.done { background: rgba(3, 102, 214, 0.10); }
+  .badge.abandoned { background: rgba(215, 58, 73, 0.10); }
+  .badge.merged { background: rgba(176, 136, 0, 0.12); }
+  .badge.complete { background: rgba(34, 134, 58, 0.12); }
+  .badge.partial { background: rgba(176, 136, 0, 0.12); }
+  .badge.unknown { background: rgba(215, 58, 73, 0.10); }
+}
 
 .status-list {
   list-style: none;
@@ -233,6 +291,35 @@ ul#notes-list li time {
   margin-top: 4px;
 }
 
+/* uPlot chart container */
+.chart {
+  width: 100%;
+  min-height: 180px;
+  margin: 4px 0 8px;
+}
+
+/* uPlot dark/light theme overrides */
+.u-legend {
+  color: var(--text);
+  font-size: 12px;
+}
+.u-axis { color: var(--text-dim); }
+.u-cursor-pt { border-color: var(--accent) !important; }
+
+/* data table behind the chart, collapsed by default */
+.chart-details {
+  margin-top: 8px;
+}
+.chart-details summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 12px;
+  user-select: none;
+  padding: 4px 0;
+}
+.chart-details summary:hover { color: var(--text); }
+.chart-details[open] summary { margin-bottom: 8px; }
+
 footer {
   text-align: center;
   color: var(--text-dim);
@@ -248,3 +335,12 @@ footer code {
 }
 
 a { color: var(--link); }
+
+/* small screens */
+@media (max-width: 600px) {
+  header { padding: 12px 16px; gap: 8px; }
+  header h1 { font-size: 16px; }
+  main { padding: 16px; }
+  .card { padding: 12px 14px; }
+  .stat .value { font-size: 18px; }
+}

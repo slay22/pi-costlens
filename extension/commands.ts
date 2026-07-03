@@ -29,7 +29,7 @@ import {
   type Feature,
 } from "./lifecycle.js";
 import { readConfig, writeConfig } from "./config.js";
-import { startServer, stopServer, getCurrentServer, openBrowser } from "./server.js";
+import { startServer, stopServer, openBrowser } from "./server.js";
 
 export type CommandDeps = {
   getActiveFeatureId: () => string | null;
@@ -339,7 +339,6 @@ async function doDashboard(ctx: ExtensionContext, _deps: CommandDeps, rest: stri
   try {
     const handle = await startServer({ detach });
     const url = `http://localhost:${handle.port}/`;
-    const already = getCurrentServer()?.pid === handle.pid && !detach ? false : true;
     if (ctx.hasUI) {
       try {
         await openBrowser(url);
@@ -357,7 +356,6 @@ async function doDashboard(ctx: ExtensionContext, _deps: CommandDeps, rest: stri
       // No UI (print/JSON mode): just print the URL.
       process.stdout.write(`costlens-dashboard: ${url}\n`);
     }
-    void already;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await ctx.ui.notify(`Costlens: failed to start dashboard — ${msg}`, "error");
