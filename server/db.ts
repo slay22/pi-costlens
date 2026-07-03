@@ -85,7 +85,7 @@ export function openDb(path: string): Database {
       `Costlens DB not found at ${path}; has the extension been run yet?`
     );
   }
-  _db = new Database(path, { readonly: true, fileMustExist: true });
+  _db = new Database(path, { readonly: true });
   return _db;
 }
 

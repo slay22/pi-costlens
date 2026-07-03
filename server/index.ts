@@ -1,19 +1,18 @@
 /**
  * Costlens dashboard server (Bun).
  *
- * Step 2 of PHASE4.md: server skeleton + DB queries + JSON API.
- * Step 4 (HTML pages) and step 5 (uPlot) come later.
+ * Step 4 of PHASE4.md: server + DB + JSON API + static HTML pages.
+ * Step 5 (uPlot charts) comes next.
  *
  * Run manually:
  *   bun server/index.ts
- *   curl http://localhost:7331/api/health
- *   curl http://localhost:7331/api/overview
+ *   open http://localhost:7331/
  *
- * The extension spawns this in step 3 with COSTLENS_HOME and
- * COSTLENS_PORT set in the environment.
+ * The extension spawns this via the `startServer` helper in
+ * `extension/server.ts` with COSTLENS_HOME and COSTLENS_PORT set.
  */
 
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { openDb, closeDb } from "./db.js";
 import {
@@ -31,13 +30,33 @@ const COSTLENS_HOME = process.env.COSTLENS_HOME
 const DB_PATH = join(COSTLENS_HOME, "ledger.db");
 const REQUESTED_PORT = Number(process.env.COSTLENS_PORT) || 7331;
 const STARTED_AT = new Date().toISOString();
-const VERSION = "0.4.0-step2";
+const VERSION = "0.4.0-step4";
+
+// Web assets live in server/web/ alongside this file.
+const WEB_DIR = join(dirname(import.meta.path), "web");
 
 // Open the DB up-front so we fail fast with a clear error if it's
 // missing, rather than 500-ing on the first request.
 openDb(DB_PATH);
 
 const ctx: RouteContext = { startedAt: STARTED_AT, version: VERSION };
+
+const MIME: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "application/javascript; charset=utf-8",
+  ".json": "application/json",
+};
+
+function serveStatic(path: string): Response {
+  const file = Bun.file(path);
+  return new Response(file, {
+    headers: {
+      "content-type": MIME[path.slice(path.lastIndexOf("."))] ?? "application/octet-stream",
+      "cache-control": "no-cache",
+    },
+  });
+}
 
 const server = Bun.serve({
   port: REQUESTED_PORT,
@@ -46,11 +65,11 @@ const server = Bun.serve({
     const path = url.pathname;
 
     try {
-      if (path === "/api/health") return handleHealth(ctx, server.port);
+      // API routes
+      if (path === "/api/health") return handleHealth(ctx, REQUESTED_PORT);
       if (path === "/api/overview") return handleOverview();
       if (path === "/api/features") return handleFeatures();
 
-      // /api/features/:id and /api/features/:id/messages
       const featureMatch = path.match(/^\/api\/features\/([^/]+)(?:\/(messages))?$/);
       if (featureMatch) {
         const id = decodeURIComponent(featureMatch[1]);
@@ -59,10 +78,22 @@ const server = Bun.serve({
         return handleFeature(id);
       }
 
+      // Page routes
+      if (path === "/" || path === "/index.html") {
+        return serveStatic(join(WEB_DIR, "index.html"));
+      }
+      const featurePageMatch = path.match(/^\/feature\/(.+)$/);
+      if (featurePageMatch) {
+        return serveStatic(join(WEB_DIR, "feature.html"));
+      }
+
+      // Static assets
+      if (path === "/style.css") return serveStatic(join(WEB_DIR, "style.css"));
+      if (path === "/overview.js") return serveStatic(join(WEB_DIR, "overview.js"));
+      if (path === "/feature.js") return serveStatic(join(WEB_DIR, "feature.js"));
+
       return new Response("Not found", { status: 404 });
     } catch (err) {
-      // Last-resort safety net so the server never crashes on a bad
-      // request. The API handlers already catch their own errors.
       const message = err instanceof Error ? err.message : String(err);
       console.error(`unhandled error: ${message}`);
       return new Response(JSON.stringify({ error: "server_error", message }), {
@@ -76,8 +107,8 @@ const server = Bun.serve({
 console.log(`costlens-server v${VERSION}`);
 console.log(`  listening:  http://localhost:${server.port}`);
 console.log(`  db path:    ${DB_PATH}`);
+console.log(`  web dir:    ${WEB_DIR}`);
 console.log(`  pid:        ${process.pid}`);
-console.log(`  routes:     /api/health, /api/overview, /api/features, /api/features/:id, /api/features/:id/messages`);
 
 const shutdown = (signal: string) => {
   console.log(`\ncostlens-server received ${signal}, shutting down`);

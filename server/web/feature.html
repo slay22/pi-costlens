@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Costlens · feature</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <a class="back" href="/">← back</a>
+    <h1 id="feature-name">…</h1>
+    <span id="feature-status" class="badge">…</span>
+    <button id="refresh" type="button">↻ Refresh</button>
+  </header>
+
+  <main>
+    <section id="summary" class="card">
+      <div class="stat">
+        <div class="label">Cost</div>
+        <div class="value" id="stat-cost">$0.00</div>
+      </div>
+      <div class="stat">
+        <div class="label">Cap</div>
+        <div class="value" id="stat-cap">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">Turns</div>
+        <div class="value" id="stat-turns">0</div>
+      </div>
+      <div class="stat">
+        <div class="label">Pricing</div>
+        <div class="value" id="stat-pricing">—</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Details</h2>
+      <dl id="details">
+        <dt>Branch</dt><dd id="detail-branch">—</dd>
+        <dt>Started</dt><dd id="detail-started">—</dd>
+        <dt>Last activity</dt><dd id="detail-last">—</dd>
+        <dt>Tokens in</dt><dd id="detail-in">0</dd>
+        <dt>Tokens out</dt><dd id="detail-out">0</dd>
+        <dt>Cache read</dt><dd id="detail-cache-r">0</dd>
+        <dt>Cache write</dt><dd id="detail-cache-w">0</dd>
+        <dt>Recent models</dt><dd id="detail-models">—</dd>
+      </dl>
+    </section>
+
+    <section class="card" id="notes-card" hidden>
+      <h2>Notes</h2>
+      <ul id="notes-list"></ul>
+    </section>
+
+    <section class="card placeholder">
+      <h2>Cost over time</h2>
+      <p class="muted">Chart coming in the next step — uPlot integration.</p>
+      <table id="timeline">
+        <thead><tr><th>Timestamp</th><th>Model</th><th class="num">In</th><th class="num">Out</th><th class="num">Cost</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+  </main>
+
+  <footer>
+    <span>Costlens v0.4.0 · auto-refresh every 5s</span>
+  </footer>
+
+  <script src="/feature.js"></script>
+</body>
+</html>
