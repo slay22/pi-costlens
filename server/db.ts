@@ -122,10 +122,11 @@ export function getAllFeatures(): Feature[] {
     .all() as Feature[];
 }
 
-export function getFeature(id: string): Feature | undefined {
-  return getDb()
+export function getFeature(id: string): Feature | null {
+  const row = getDb()
     .prepare(`SELECT * FROM features WHERE id = ?`)
-    .get(id) as Feature | undefined;
+    .get(id) as Feature | null;
+  return row ?? null;
 }
 
 export function getNotes(featureId: string): Note[] {
@@ -282,6 +283,11 @@ export function getOverview(): Overview {
   const statusRows = db
     .prepare(`SELECT status, COUNT(*) AS c FROM features GROUP BY status`)
     .all() as Array<{ status: string; c: number }>;
+  const unassignedCount = (
+    db
+      .prepare(`SELECT COUNT(*) AS c FROM features WHERE id = 'unassigned'`)
+      .get() as { c: number }
+  ).c;
   const byStatus = {
     open: 0,
     done: 0,
@@ -290,10 +296,11 @@ export function getOverview(): Overview {
     unassigned: 0,
   };
   for (const row of statusRows) {
-    if (row.status in byStatus) {
+    if (row.status in byStatus && row.status !== "unassigned") {
       (byStatus as Record<string, number>)[row.status] = row.c;
     }
   }
+  byStatus.unassigned = unassignedCount;
 
   return {
     totalCost: totalRow.cost,

@@ -10,8 +10,9 @@
  *   - port.ts finds the next free port in 7331..7399
  *   - config.ts round-trips a config object through disk
  *
- * Each test gets a fresh temp COSTLENS_HOME so it doesn't touch the
- * real ledger.
+ * The DB is seeded once in beforeAll. Tests run against the known
+ * fixture state. Tests that mutate the DB (config round-trip) use
+ * separate temp paths so they don't disturb the seeded DB.
  */
 
 import { test, expect, describe, beforeAll, afterAll, beforeEach } from "bun:test";
@@ -23,10 +24,12 @@ import { Database } from "bun:sqlite";
 const TEST_HOME = mkdtempSync(join(tmpdir(), "costlens-server-test-"));
 process.env.COSTLENS_HOME = TEST_HOME;
 
-const DB_PATH = join(TEST_HOME, "costlens", "ledger.db");
+const DB_DIR = join(TEST_HOME, "costlens");
+const DB_PATH = join(DB_DIR, "ledger.db");
+const CONFIG_PATH = join(DB_DIR, "config.json");
 
 // ---------------------------------------------------------------------------
-// Schema + helpers
+// Schema + fixture seed
 // ---------------------------------------------------------------------------
 
 const SCHEMA = `
@@ -91,19 +94,12 @@ const SCHEMA = `
   );
 `;
 
-function seedEmptyDb() {
-  mkdirSync(join(TEST_HOME, "costlens"), { recursive: true });
-  // Delete the file if it exists so we always start from a clean slate.
+function seed() {
+  mkdirSync(DB_DIR, { recursive: true });
   if (existsSync(DB_PATH)) rmSync(DB_PATH);
   const db = new Database(DB_PATH);
   db.exec(SCHEMA);
-  db.close();
-}
 
-function seedFullDb() {
-  seedEmptyDb();
-  const db = new Database(DB_PATH);
-  db.exec("PRAGMA foreign_keys = ON");
   const insertFeature = db.prepare(
     `INSERT INTO features
        (id, name, branch, status, cap_usd, started_at, closed_at,
@@ -164,7 +160,6 @@ function seedFullDb() {
     "2026-07-01T12:00:00Z", "feat/open"
   );
 
-  // A note and tag on the open feature.
   insertNote.run("feat/open", "started work", "2026-06-30T10:30:00Z");
   insertNote.run("feat/open", "finished backend", "2026-07-01T10:00:00Z");
   insertTag.run("feat/open", "backend");
@@ -172,6 +167,10 @@ function seedFullDb() {
 
   db.close();
 }
+
+// Import once. The singleton is opened in beforeAll.
+const db = await import("../server/db.js");
+const api = await import("../server/api.js");
 
 // ---------------------------------------------------------------------------
 // port.ts
@@ -195,12 +194,14 @@ describe("port", () => {
   test("findFreePort finds the next port when start is taken", async () => {
     const { createServer } = await import("node:net");
     const { findFreePort } = await import("../server/port.js");
-    // Bind port 7331 so it's taken.
+    // Bind port 7331 so it's taken. Use a port in the upper half of
+    // the range so we don't collide with the running server (if any).
+    const blockerPort = 7350;
     const blocker = createServer();
-    await new Promise<void>((r) => blocker.listen(7331, "127.0.0.1", r));
+    await new Promise<void>((r) => blocker.listen(blockerPort, "127.0.0.1", r));
     try {
-      const port = await findFreePort(7331);
-      expect(port).toBe(7332);
+      const port = await findFreePort(blockerPort);
+      expect(port).toBe(blockerPort + 1);
     } finally {
       await new Promise<void>((r) => blocker.close(() => r()));
     }
@@ -225,8 +226,8 @@ describe("port", () => {
 
 describe("config", () => {
   beforeEach(() => {
-    const cfg = join(TEST_HOME, "costlens", "config.json");
-    if (existsSync(cfg)) rmSync(cfg);
+    mkdirSync(DB_DIR, { recursive: true });
+    if (existsSync(CONFIG_PATH)) rmSync(CONFIG_PATH);
   });
 
   test("returns defaults when no config file", async () => {
@@ -236,62 +237,48 @@ describe("config", () => {
   });
 
   test("round-trips a config object through disk", async () => {
-    const fs = await import("node:fs");
-    const cfg = join(TEST_HOME, "costlens", "config.json");
-    mkdirSync(join(TEST_HOME, "costlens"), { recursive: true });
-    fs.writeFileSync(cfg, JSON.stringify({ port: 8080 }, null, 2) + "\n");
+    writeFileSync(CONFIG_PATH, JSON.stringify({ port: 8080 }, null, 2) + "\n");
     const { readConfig } = await import("../server/config.js");
     expect(readConfig().port).toBe(8080);
   });
 
   test("falls back to defaults for malformed JSON", async () => {
-    const cfg = join(TEST_HOME, "costlens", "config.json");
-    mkdirSync(join(TEST_HOME, "costlens"), { recursive: true });
-    writeFileSync(cfg, "{ not valid json");
+    writeFileSync(CONFIG_PATH, "{ not valid json");
     const { readConfig } = await import("../server/config.js");
     expect(readConfig().port).toBe(7331);
   });
 
   test("falls back to defaults for non-positive port", async () => {
-    const cfg = join(TEST_HOME, "costlens", "config.json");
-    mkdirSync(join(TEST_HOME, "costlens"), { recursive: true });
-    writeFileSync(cfg, JSON.stringify({ port: -1 }));
+    writeFileSync(CONFIG_PATH, JSON.stringify({ port: -1 }));
     const { readConfig } = await import("../server/config.js");
     expect(readConfig().port).toBe(7331);
   });
 });
 
 // ---------------------------------------------------------------------------
-// db.ts + api.ts (with a fresh module instance per test)
+// db.ts + api.ts (read-only, against the seeded fixture)
 // ---------------------------------------------------------------------------
 
 describe("db + api", () => {
-  let db: typeof import("../server/db.js");
-  let api: typeof import("../server/api.js");
-
   beforeAll(() => {
-    seedFullDb();
-  });
-
-  beforeEach(async () => {
-    // Re-import db/api to reset the singleton between tests.
-    db = await import(`../server/db.js?reset=${Math.random()}`);
-    api = await import(`../server/api.js?reset=${Math.random()}`);
+    seed();
     db.openDb(DB_PATH);
   });
 
   test("getAllFeatures returns rows sorted by last activity desc", () => {
     const features = db.getAllFeatures();
     expect(features.length).toBe(3);
-    // The unassigned row has the most recent last_activity_at.
+    // unassigned has the most recent last_activity_at.
     expect(features[0].id).toBe("unassigned");
     expect(features[1].id).toBe("feat/open");
     expect(features[2].id).toBe("feat/done");
   });
 
-  test("getFeature returns the row or undefined", () => {
+  test("getFeature returns the row or null", () => {
     expect(db.getFeature("feat/open")?.id).toBe("feat/open");
-    expect(db.getFeature("nope")).toBeUndefined();
+    // bun:sqlite's .get() returns null for not-found, which we
+    // normalize through the call sites that distinguish 404s.
+    expect(db.getFeature("nope")).toBeNull();
   });
 
   test("getNotes returns notes in created_at order", () => {
@@ -335,18 +322,16 @@ describe("db + api", () => {
 
   test("getOverview shape and totals", () => {
     const o = db.getOverview();
-    expect(o.totalCost).toBeCloseTo(1.734, 4); // 1.234 + 0.5 (excludes unassigned)
-    expect(o.totalTurns).toBe(17); // 12 + 5 (excludes unassigned)
+    // 1.234 (open) + 0.5 (done) — unassigned excluded from total
+    expect(o.totalCost).toBeCloseTo(1.734, 4);
+    expect(o.totalTurns).toBe(17); // 12 + 5
     expect(o.totalFeatures).toBe(3);
     expect(o.currentFeature).not.toBeNull();
-    // byDay is 30 contiguous days
     expect(o.byDay.length).toBe(30);
     expect(o.byDay[0].date < o.byDay[o.byDay.length - 1].date).toBe(true);
-    // byModel has 2 entries
     expect(o.byModel.length).toBe(2);
     const haiku = o.byModel.find((m) => m.model === "claude-haiku-4-5");
     expect(haiku?.cost).toBeCloseTo(0.15, 4);
-    // byStatus counts
     expect(o.byStatus.open).toBe(2);
     expect(o.byStatus.done).toBe(1);
     expect(o.byStatus.abandoned).toBe(0);
@@ -354,34 +339,42 @@ describe("db + api", () => {
     expect(o.byStatus.unassigned).toBe(1);
   });
 
-  test("handleHealth returns ok + version + startedAt + port", () => {
+  test("handleHealth returns ok + version + startedAt + port", async () => {
     const res = api.handleHealth({ startedAt: "X", version: "v1" }, 8080);
     expect(res.status).toBe(200);
-    const body = res.json() as any;
+    const body = (await (res as any).json()) as any;
     expect(body.ok).toBe(true);
     expect(body.version).toBe("v1");
     expect(body.startedAt).toBe("X");
     expect(body.port).toBe(8080);
   });
 
-  test("handleFeatures returns the full list", () => {
+  test("handleOverview returns the overview object", async () => {
+    const res = api.handleOverview();
+    expect(res.status).toBe(200);
+    const body = (await (res as any).json()) as any;
+    expect(body.totalFeatures).toBe(3);
+    expect(body.byDay.length).toBe(30);
+  });
+
+  test("handleFeatures returns the full list", async () => {
     const res = api.handleFeatures();
     expect(res.status).toBe(200);
-    const body = res.json() as any[];
+    const body = (await (res as any).json()) as any[];
     expect(body.length).toBe(3);
   });
 
-  test("handleFeature returns 404 for missing", () => {
+  test("handleFeature returns 404 for missing", async () => {
     const res = api.handleFeature("nope");
     expect(res.status).toBe(404);
-    const body = res.json() as any;
+    const body = (await (res as any).json()) as any;
     expect(body.error).toBe("not_found");
   });
 
-  test("handleFeature returns full record with notes/tags/recentModels", () => {
+  test("handleFeature returns full record with notes/tags/recentModels", async () => {
     const res = api.handleFeature("feat/open");
     expect(res.status).toBe(200);
-    const body = res.json() as any;
+    const body = (await (res as any).json()) as any;
     expect(body.id).toBe("feat/open");
     expect(body.notes.length).toBe(2);
     expect(body.tags).toEqual(["backend", "v1"]);
@@ -403,10 +396,10 @@ describe("db + api", () => {
     expect(res.status).toBe(404);
   });
 
-  test("handleMessages returns messages with valid limit", () => {
+  test("handleMessages returns messages with valid limit", async () => {
     const url = new URL("http://x/api/features/feat/open/messages?limit=2");
     const res = api.handleMessages("feat/open", url);
-    const body = res.json() as any[];
+    const body = (await (res as any).json()) as any[];
     expect(body.length).toBe(2);
   });
 });
@@ -416,11 +409,11 @@ describe("db + api", () => {
 // ---------------------------------------------------------------------------
 
 afterAll(() => {
-  // best-effort; the test runner doesn't surface teardown failures
   try {
+    db.closeDb();
     rmSync(TEST_HOME, { recursive: true, force: true });
     delete process.env.COSTLENS_HOME;
   } catch {
-    // ignore
+    // best-effort
   }
 });

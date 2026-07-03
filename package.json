@@ -6,8 +6,8 @@
   "license": "MIT",
   "private": true,
   "scripts": {
-    "test": "node --import tsx --test test/**/*.test.ts",
-    "test:watch": "node --import tsx --test --watch test/**/*.test.ts",
+    "test": "node --import tsx --test test/extension.test.ts test/footer.test.ts test/lifecycle.test.ts",
+    "test:watch": "node --import tsx --test --watch test/extension.test.ts test/footer.test.ts test/lifecycle.test.ts",
     "test:server": "bun test test/server.test.ts",
     "typecheck": "tsc --noEmit"
   },

@@ -34,6 +34,14 @@ function readTheme() {
   };
 }
 
+/** Format an epoch-seconds value as "YYYY-MM-DD HH:MM" in 24-hour local time. */
+function formatLocalTime(epochSec) {
+  const d = new Date(epochSec * 1000);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+    `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 function renderTimelineChart(el, msgs, cap) {
   el.innerHTML = "";
   if (!msgs || msgs.length === 0) {
@@ -59,7 +67,16 @@ function renderTimelineChart(el, msgs, cap) {
     width: el.clientWidth || 600,
     height: 240,
     padding: [10, 10, 10, 10],
-    cursor: { drag: { x: true, y: false } },
+    cursor: {
+      drag: { x: true, y: false },
+      // Override the default 12-hour time format. vals is [x, y]; we
+      // format the x (epoch seconds) ourselves in 24-hour local time.
+      values: (_self, vals) => vals.map((v, i) => {
+        if (v == null) return "—";
+        if (i === 0) return formatLocalTime(v);
+        return "$" + Number(v).toFixed(Number(v) < 1 ? 4 : 2);
+      }),
+    },
     scales: {
       x: { time: true },
       y: { auto: true },

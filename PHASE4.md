@@ -2,7 +2,9 @@
 
 A local web dashboard served by an embedded Bun process, reading from the same SQLite ledger the extension writes to. Real-time cost visibility, model breakdowns, and per-feature detail.
 
-**Status:** not started. Dogfood target: branch `feat/phase-4-dashboard`.
+**Status:** ✅ shipped. Dogfood target: branch `feat/phase-4-dashboard`.
+
+Implementation order completed: steps 1-7 + section 10 tests + section 12 decisions. 57 extension tests + 25 server tests passing. uPlot 1.6.32 vendored. Port-fallback (findFreePort) handles the case where the configured port is taken.
 
 ---
 
