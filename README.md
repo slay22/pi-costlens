@@ -233,7 +233,7 @@ The digest also fires the native notifier, so you'll see it as a banner even whe
 
 ## Rollback
 
-Costlens is additive across all five phases. To wipe tags / notes without touching features / messages:
+Costlens is additive across all six phases. To wipe tags / notes without touching features / messages:
 
 ```sql
 DELETE FROM tags;
@@ -281,6 +281,7 @@ costlens/
 ├── package.json
 ├── tsconfig.json
 ├── PLAN.md
+├── PHASE4.md
 ├── PHASE5.md
 ├── PHASE6.md
 └── README.md

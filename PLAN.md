@@ -205,20 +205,23 @@ costlens/
 1. **Phase 1 — Skeleton + DB** ✅: extension registers, creates the SQLite schema, hooks `message_end`, writes one message row.
 2. **Phase 2 — Feature lifecycle** ✅: Y/n prompt for fresh branches, close/cancel/rename/set-cap/reopen, multi-session continuity, footer with cap marker. Closed features on a branch do NOT auto-resume; `/feature reopen` is explicit.
 3. **Phase 3 — Footer polish** ✅: ANSI colour in footer (green / yellow / bright-yellow / red by cap ratio), testable `formatFooterText`, text-marker fallbacks for terminals that strip ANSI, grouped help text.
-4. **Phase 4 — Dashboard v1:** Bun server, overview page, feature detail page, charts. Detach flag.
-5. **Phase 5 — Polish:** tags, notes, merge, search, export, pricing confidence badge, README, packaging.
+4. **Phase 4 — Dashboard v1** ✅: Bun server (port 7331), overview + feature-detail pages, uPlot charts, port config, detach mode, browser auto-open, real-time costlens dogfooded to 0.4.0 over 86 turns / $0.47.
+5. **Phase 5 — Polish** ✅: tags, notes, merge, search, export, dashboard tag chips, search box. Costlens dogfooded to 0.5.0 over 119 turns / $0.95.
+6. **Phase 6 — Notifications & digest** ✅: native OS notifications on cap thresholds (50/80/100/110%), in-memory debounce, optional webhook (Slack-compatible), daily digest at session_start. Costlens dogfooded on `feat/phase-6-notifications`.
+7. **Phase 7 — Sub-agent cost attribution**: track cost of `Agent` tool invocations (Explore, Plan, general-purpose, etc.), per-tool cost analysis, latency. The "hard" deferred item.
+8. **Phase 8 — Packaging & publish**: `npm publish`, install script, public landing page, launch post. The "ship it" phase.
 
 ---
 
 ## 7. Explicitly deferred to v2
 
-- Cost by sub-agent (requires reading `ToolResultMessage.details` from the subagent extension, or patching that extension to write usage)
-- Latency / tokens-per-second / "model performance" comparison
-- Per-tool cost analysis (currently just counts)
+- Cost by sub-agent (now in Phase 7)
+- Latency / tokens-per-second / "model performance" comparison (now in Phase 7)
+- Per-tool cost analysis (now in Phase 7)
 - Custom pricing overrides
 - Sync across machines / team mode
 - Cross-session budget periods (e.g., "monthly budget")
-- Native OS notifications for cap hits
+- Native OS notifications for cap hits (now in Phase 6)
 
 ---
 
