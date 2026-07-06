@@ -27,6 +27,7 @@ export type Feature = {
   closed_at: string | null;
   pricing_conf: "complete" | "partial" | "unknown";
   total_cost_usd: number;
+  subagent_cost_usd: number;
   total_input: number;
   total_output: number;
   total_cache_read: number;
@@ -34,6 +35,40 @@ export type Feature = {
   turn_count: number;
   first_activity_at: string | null;
   last_activity_at: string | null;
+};
+
+export type SubagentRun = {
+  id: number;
+  feature_id: string;
+  parent_message_id: string;
+  agent: string;
+  agent_source: "user" | "project" | "unknown";
+  model: string | null;
+  task: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read: number;
+  cache_write: number;
+  cost_usd: number;
+  turns: number;
+  step: number | null;
+  exit_code: number;
+  stop_reason: string | null;
+  timestamp: string;
+};
+
+export type SubagentSummary = {
+  agent: string;
+  runs: number;
+  cost: number;
+  turns: number;
+  input_tokens: number;
+  output_tokens: number;
+};
+
+export type ToolCallSummary = {
+  tool_name: string;
+  calls: number;
 };
 
 export type Message = {
@@ -54,6 +89,7 @@ export type Note = { id: number; body: string; created_at: string };
 
 export type Overview = {
   totalCost: number;
+  totalSubagentCost: number;
   totalTurns: number;
   totalFeatures: number;
   currentFeature: { id: string; name: string; cost: number; turns: number } | null;
@@ -61,10 +97,12 @@ export type Overview = {
     id: string;
     name: string;
     cost: number;
+    subagentCost: number;
     turns: number;
     status: string;
     tags: string[];
   }>;
+  topSubagents: SubagentSummary[];
   byDay: Array<{ date: string; cost: number; turns: number }>;
   byModel: Array<{
     model: string;
@@ -168,6 +206,8 @@ export type LedgerExport = {
   notes: Array<{ id: number; feature_id: string; body: string; created_at: string }>;
   tags: Array<{ feature_id: string; tag: string }>;
   sessions: Array<{ id: string; feature_id: string; cwd: string; started_at: string; last_seen: string }>;
+  subagent_runs: Array<Record<string, unknown>>;
+  tool_calls: Array<Record<string, unknown>>;
 };
 
 export function exportLedger(): LedgerExport {
@@ -197,6 +237,20 @@ export function exportLedger(): LedgerExport {
         `SELECT id, feature_id, cwd, started_at, last_seen FROM sessions ORDER BY id`
       )
       .all() as Array<{ id: string; feature_id: string; cwd: string; started_at: string; last_seen: string }>,
+    subagent_runs: db
+      .prepare(
+        `SELECT id, feature_id, parent_message_id, agent, agent_source, model, task,
+                input_tokens, output_tokens, cache_read, cache_write, cost_usd,
+                turns, step, exit_code, stop_reason, timestamp
+         FROM subagent_runs ORDER BY feature_id, timestamp, id`
+      )
+      .all() as Array<Record<string, unknown>>,
+    tool_calls: db
+      .prepare(
+        `SELECT id, feature_id, message_id, tool_name, args_size, timestamp
+         FROM tool_calls ORDER BY feature_id, timestamp, id`
+      )
+      .all() as Array<Record<string, unknown>>,
   };
 }
 
@@ -211,8 +265,8 @@ export function exportLedgerCsv(): string {
   sections.push(
     csvSection("features", [
       "id", "name", "branch", "status", "cap_usd", "started_at", "closed_at",
-      "pricing_conf", "total_cost_usd", "total_input", "total_output",
-      "total_cache_read", "total_cache_write", "turn_count",
+      "pricing_conf", "total_cost_usd", "subagent_cost_usd", "total_input",
+      "total_output", "total_cache_read", "total_cache_write", "turn_count",
       "first_activity_at", "last_activity_at",
     ], data.features as unknown as Array<Record<string, unknown>>)
   );
@@ -232,6 +286,18 @@ export function exportLedgerCsv(): string {
   );
   sections.push(
     csvSection("sessions", ["id", "feature_id", "cwd", "started_at", "last_seen"], data.sessions)
+  );
+  sections.push(
+    csvSection("subagent_runs", [
+      "id", "feature_id", "parent_message_id", "agent", "agent_source", "model",
+      "task", "input_tokens", "output_tokens", "cache_read", "cache_write",
+      "cost_usd", "turns", "step", "exit_code", "stop_reason", "timestamp",
+    ], data.subagent_runs)
+  );
+  sections.push(
+    csvSection("tool_calls", [
+      "id", "feature_id", "message_id", "tool_name", "args_size", "timestamp",
+    ], data.tool_calls)
   );
   return sections.join("\n");
 }
@@ -321,6 +387,77 @@ export function getMessages(
 }
 
 // ---------------------------------------------------------------------------
+// Sub-agents + tool calls (Phase 7)
+// ---------------------------------------------------------------------------
+
+/** All sub-agent runs for a single feature, in chronological order. */
+export function getSubagentRuns(featureId: string): SubagentRun[] {
+  return getDb()
+    .prepare(
+      `SELECT * FROM subagent_runs
+       WHERE feature_id = ?
+       ORDER BY timestamp ASC, id ASC`
+    )
+    .all(featureId) as SubagentRun[];
+}
+
+/** Per-agent aggregation for a single feature, ordered by cost desc. */
+export function getSubagentSummary(featureId: string): SubagentSummary[] {
+  return getDb()
+    .prepare(
+      `SELECT
+         agent,
+         COUNT(*)             AS runs,
+         SUM(cost_usd)        AS cost,
+         SUM(turns)           AS turns,
+         SUM(input_tokens)    AS input_tokens,
+         SUM(output_tokens)   AS output_tokens
+       FROM subagent_runs
+       WHERE feature_id = ?
+       GROUP BY agent
+       ORDER BY cost DESC, runs DESC`
+    )
+    .all(featureId) as SubagentSummary[];
+}
+
+/**
+ * Cross-feature aggregation of sub-agent runs. Excludes the unassigned
+ * pool. Used by the overview "top sub-agents" table and the
+ * `/api/subagents/top` endpoint.
+ */
+export function getTopSubagents(limit = 10): SubagentSummary[] {
+  return getDb()
+    .prepare(
+      `SELECT
+         agent,
+         COUNT(*)             AS runs,
+         SUM(cost_usd)        AS cost,
+         SUM(turns)           AS turns,
+         SUM(input_tokens)    AS input_tokens,
+         SUM(output_tokens)   AS output_tokens
+       FROM subagent_runs
+       WHERE feature_id != 'unassigned'
+       GROUP BY agent
+       ORDER BY cost DESC, runs DESC
+       LIMIT ?`
+    )
+    .all(limit) as SubagentSummary[];
+}
+
+/** Per-tool call counts for a single feature, ordered by count desc. */
+export function getToolCallCounts(featureId: string): ToolCallSummary[] {
+  return getDb()
+    .prepare(
+      `SELECT tool_name, COUNT(*) AS calls
+       FROM tool_calls
+       WHERE feature_id = ?
+       GROUP BY tool_name
+       ORDER BY calls DESC, tool_name ASC`
+    )
+    .all(featureId) as ToolCallSummary[];
+}
+
+// ---------------------------------------------------------------------------
 // Overview
 // ---------------------------------------------------------------------------
 
@@ -358,7 +495,8 @@ export function getOverview(): Overview {
 
   const topFeatures = db
     .prepare(
-      `SELECT id, name, total_cost_usd AS cost, turn_count AS turns, status,
+      `SELECT id, name, total_cost_usd AS cost, subagent_cost_usd AS subagentCost,
+              turn_count AS turns, status,
               (SELECT GROUP_CONCAT(tag, ',')
                  FROM tags
                  WHERE tags.feature_id = features.id
@@ -372,10 +510,44 @@ export function getOverview(): Overview {
       id: string;
       name: string;
       cost: number;
+      subagentCost: number;
       turns: number;
       status: string;
       tags_csv: string | null;
     }>;
+
+  // Sub-agent rollup across the whole ledger (excludes unassigned).
+  const topSubagents = db
+    .prepare(
+      `SELECT
+         agent,
+         COUNT(*)             AS runs,
+         SUM(cost_usd)        AS cost,
+         SUM(turns)           AS turns,
+         SUM(input_tokens)    AS input_tokens,
+         SUM(output_tokens)   AS output_tokens
+       FROM subagent_runs
+       WHERE feature_id != 'unassigned'
+       GROUP BY agent
+       ORDER BY cost DESC, runs DESC
+       LIMIT 5`
+    )
+    .all() as Array<{
+      agent: string;
+      runs: number;
+      cost: number;
+      turns: number;
+      input_tokens: number;
+      output_tokens: number;
+    }>;
+
+  const totalSubagentRow = db
+    .prepare(
+      `SELECT COALESCE(SUM(cost_usd), 0) AS cost
+       FROM subagent_runs
+       WHERE feature_id != 'unassigned'`
+    )
+    .get() as { cost: number };
 
   // byDay covers the last 30 days; missing days are filled with zeros
   // so the chart has a continuous x-axis.
@@ -444,6 +616,7 @@ export function getOverview(): Overview {
 
   return {
     totalCost: totalRow.cost,
+    totalSubagentCost: totalSubagentRow.cost,
     totalTurns: totalRow.turns,
     totalFeatures,
     currentFeature: currentRow ?? null,
@@ -451,9 +624,18 @@ export function getOverview(): Overview {
       id: f.id,
       name: f.name,
       cost: f.cost,
+      subagentCost: f.subagentCost ?? 0,
       turns: f.turns,
       status: f.status,
       tags: f.tags_csv ? f.tags_csv.split(",") : [],
+    })),
+    topSubagents: topSubagents.map((s) => ({
+      agent: s.agent,
+      runs: s.runs,
+      cost: s.cost,
+      turns: s.turns,
+      input_tokens: s.input_tokens,
+      output_tokens: s.output_tokens,
     })),
     byDay,
     byModel,

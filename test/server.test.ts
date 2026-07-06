@@ -43,6 +43,7 @@ const SCHEMA = `
     closed_at         TEXT,
     pricing_conf      TEXT    NOT NULL,
     total_cost_usd    REAL    NOT NULL DEFAULT 0,
+    subagent_cost_usd REAL    NOT NULL DEFAULT 0,
     total_input       INTEGER NOT NULL DEFAULT 0,
     total_output      INTEGER NOT NULL DEFAULT 0,
     total_cache_read  INTEGER NOT NULL DEFAULT 0,
@@ -92,6 +93,38 @@ const SCHEMA = `
     started_at TEXT NOT NULL,
     last_seen  TEXT NOT NULL
   );
+
+  CREATE TABLE subagent_runs (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    feature_id        TEXT    NOT NULL,
+    parent_message_id TEXT    NOT NULL,
+    agent             TEXT    NOT NULL,
+    agent_source      TEXT    NOT NULL,
+    model             TEXT,
+    task              TEXT    NOT NULL,
+    input_tokens      INTEGER NOT NULL,
+    output_tokens     INTEGER NOT NULL,
+    cache_read        INTEGER NOT NULL,
+    cache_write       INTEGER NOT NULL,
+    cost_usd          REAL    NOT NULL,
+    turns             INTEGER NOT NULL,
+    step              INTEGER,
+    exit_code         INTEGER NOT NULL,
+    stop_reason       TEXT,
+    timestamp         TEXT    NOT NULL
+  );
+
+  CREATE UNIQUE INDEX idx_subagent_unique
+    ON subagent_runs(feature_id, parent_message_id, agent, COALESCE(step, -1));
+
+  CREATE TABLE tool_calls (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    feature_id  TEXT    NOT NULL,
+    message_id  TEXT    NOT NULL,
+    tool_name   TEXT    NOT NULL,
+    args_size   INTEGER,
+    timestamp   TEXT    NOT NULL
+  );
 `;
 
 function seed() {
@@ -103,10 +136,10 @@ function seed() {
   const insertFeature = db.prepare(
     `INSERT INTO features
        (id, name, branch, status, cap_usd, started_at, closed_at,
-        pricing_conf, total_cost_usd, total_input, total_output,
-        total_cache_read, total_cache_write, turn_count,
+        pricing_conf, total_cost_usd, subagent_cost_usd, total_input,
+        total_output, total_cache_read, total_cache_write, turn_count,
         first_activity_at, last_activity_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   const insertMessage = db.prepare(
     `INSERT INTO messages
@@ -122,24 +155,35 @@ function seed() {
   const insertTag = db.prepare(
     `INSERT INTO tags (feature_id, tag) VALUES (?, ?)`
   );
+  const insertSubagent = db.prepare(
+    `INSERT INTO subagent_runs
+       (feature_id, parent_message_id, agent, agent_source, model, task,
+        input_tokens, output_tokens, cache_read, cache_write, cost_usd,
+        turns, step, exit_code, stop_reason, timestamp)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+  const insertToolCall = db.prepare(
+    `INSERT INTO tool_calls (feature_id, message_id, tool_name, args_size, timestamp)
+     VALUES (?, ?, ?, ?, ?)`
+  );
 
   // Three features: open, done, unassigned.
   insertFeature.run(
     "feat/open", "open feature", "feat/open", "open", 5.0,
     "2026-06-30T10:00:00Z", null, "complete",
-    1.234, 1000, 500, 10000, 0, 12,
+    1.234, 0.20, 1000, 500, 10000, 0, 12,
     "2026-06-30T10:00:00Z", "2026-07-01T10:00:00Z"
   );
   insertFeature.run(
     "feat/done", "done feature", "feat/done", "done", null,
     "2026-06-25T10:00:00Z", "2026-06-29T10:00:00Z", "partial",
-    0.5, 500, 200, 5000, 0, 5,
+    0.5, 0.05, 500, 200, 5000, 0, 5,
     "2026-06-25T10:00:00Z", "2026-06-29T10:00:00Z"
   );
   insertFeature.run(
     "unassigned", "unassigned", null, "open", null,
     "2026-06-20T10:00:00Z", null, "unknown",
-    0.1, 50, 10, 0, 0, 2,
+    0.1, 0.0, 50, 10, 0, 0, 2,
     "2026-06-20T10:00:00Z", "2026-07-01T11:00:00Z"
   );
 
@@ -159,6 +203,36 @@ function seed() {
     300, 150, 3000, 0, 0.15, 0.09, 0.06, 0.00, 0.00, 0,
     "2026-07-01T12:00:00Z", "feat/open"
   );
+
+  // A few sub-agent runs for the open feature (Explore x2, Plan x1).
+  insertSubagent.run(
+    "feat/open", "msg-agent-1", "Explore", "user", "claude-haiku-4-5",
+    "find files matching the test pattern", 400, 100, 0, 0, 0.08, 2, null, 0, "stop",
+    "2026-06-30T12:30:00Z"
+  );
+  insertSubagent.run(
+    "feat/open", "msg-agent-2", "Explore", "user", "claude-haiku-4-5",
+    "second exploration", 600, 200, 0, 0, 0.10, 3, null, 0, "stop",
+    "2026-06-30T14:00:00Z"
+  );
+  insertSubagent.run(
+    "feat/open", "msg-agent-3", "Plan", "user", "claude-haiku-4-5",
+    "draft a plan", 200, 50, 0, 0, 0.02, 1, null, 0, "stop",
+    "2026-07-01T09:00:00Z"
+  );
+  // A sub-agent run for the done feature.
+  insertSubagent.run(
+    "feat/done", "msg-agent-4", "Explore", "user", "claude-haiku-4-5",
+    "explore before done", 300, 80, 0, 0, 0.05, 2, null, 0, "stop",
+    "2026-06-27T10:00:00Z"
+  );
+
+  // A few tool calls for the open feature (mix of Read, Edit, Bash).
+  insertToolCall.run("feat/open", "msg-tool-1", "Read", 100, "2026-06-30T12:00:00Z");
+  insertToolCall.run("feat/open", "msg-tool-1", "Read", 200, "2026-06-30T12:01:00Z");
+  insertToolCall.run("feat/open", "msg-tool-1", "Edit", 300, "2026-06-30T12:02:00Z");
+  insertToolCall.run("feat/open", "msg-tool-1", "Bash", 50, "2026-06-30T12:03:00Z");
+  insertToolCall.run("feat/open", "msg-tool-1", "Bash", 50, "2026-06-30T12:04:00Z");
 
   insertNote.run("feat/open", "started work", "2026-06-30T10:30:00Z");
   insertNote.run("feat/open", "finished backend", "2026-07-01T10:00:00Z");
@@ -435,16 +509,18 @@ describe("db + api", () => {
     expect(body.sessions.length).toBe(0);
   });
 
-  test("handleExportCsv returns text/csv with 5 sections", async () => {
+  test("handleExportCsv returns text/csv with 7 sections", async () => {
     const res = api.handleExportCsv();
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toMatch(/text\/csv/);
     const body = await res.text();
-    // 5 section markers
-    expect(body.match(/^# /gm)?.length).toBe(5);
+    // 5 base + subagent_runs + tool_calls (Phase 7) = 7 section markers
+    expect(body.match(/^# /gm)?.length).toBe(7);
     // Each section has a header line (column list)
     expect(body).toContain("# features\nid,name,branch,status");
     expect(body).toContain("# tags\nfeature_id,tag");
+    expect(body).toContain("# subagent_runs");
+    expect(body).toContain("# tool_calls");
     // One tag row appears
     expect(body).toContain("feat/open,backend");
   });
@@ -510,6 +586,128 @@ describe("db + api", () => {
     const res = api.handleMessages("feat/open", url);
     const body = (await (res as any).json()) as any[];
     expect(body.length).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 7: sub-agents + per-tool cost attribution
+// ---------------------------------------------------------------------------
+
+describe("sub-agents + tool calls (Phase 7)", () => {
+  test("getSubagentRuns returns rows for a feature in chronological order", () => {
+    const runs = db.getSubagentRuns("feat/open");
+    expect(runs.length).toBe(3);
+    expect(runs[0].agent).toBe("Explore");
+    expect(runs[1].agent).toBe("Explore");
+    expect(runs[2].agent).toBe("Plan");
+  });
+
+  test("getSubagentSummary aggregates per agent for a feature", () => {
+    const summary = db.getSubagentSummary("feat/open");
+    expect(summary.length).toBe(2);
+    const explore = summary.find((s) => s.agent === "Explore");
+    const plan = summary.find((s) => s.agent === "Plan");
+    expect(explore?.runs).toBe(2);
+    expect(Math.abs((explore?.cost ?? 0) - 0.18) < 1e-9).toBe(true);
+    expect(plan?.runs).toBe(1);
+  });
+
+  test("getTopSubagents rolls up across features (excludes unassigned)", () => {
+    const top = db.getTopSubagents(10);
+    // feat/open has 2x Explore + 1x Plan, feat/done has 1x Explore
+    // => 3 Explore (cost 0.08+0.10+0.05=0.23), 1 Plan (cost 0.02)
+    expect(top.length).toBe(2);
+    expect(top[0].agent).toBe("Explore");
+    expect(top[0].runs).toBe(3);
+    expect(Math.abs(top[0].cost - 0.23) < 1e-9).toBe(true);
+    expect(top[1].agent).toBe("Plan");
+    expect(top[1].runs).toBe(1);
+  });
+
+  test("getToolCallCounts aggregates per tool name for a feature", () => {
+    const counts = db.getToolCallCounts("feat/open");
+    const byName = Object.fromEntries(counts.map((c) => [c.tool_name, c.calls]));
+    expect(byName["Read"]).toBe(2);
+    expect(byName["Edit"]).toBe(1);
+    expect(byName["Bash"]).toBe(2);
+  });
+
+  test("getOverview includes sub-agent rollup and totalSubagentCost", () => {
+    const o = db.getOverview();
+    expect(o.totalSubagentCost).toBeCloseTo(0.25, 9); // 0.20 (feat/open) + 0.05 (feat/done)
+    expect(o.topSubagents.length).toBe(2);
+    expect(o.topSubagents[0].agent).toBe("Explore");
+    expect(o.topSubagents[0].runs).toBe(3);
+    // topFeatures now carries subagentCost per feature
+    const openFeat = o.topFeatures.find((f) => f.id === "feat/open");
+    expect(openFeat?.subagentCost).toBeCloseTo(0.20, 9);
+  });
+
+  test("handleFeatureSubagents returns the per-agent summary", async () => {
+    const res = api.handleFeatureSubagents("feat/open");
+    expect(res.status).toBe(200);
+    const body = (await (res as any).json()) as any[];
+    expect(body.length).toBe(2);
+    const explore = body.find((s: any) => s.agent === "Explore");
+    expect(explore.runs).toBe(2);
+  });
+
+  test("handleFeatureSubagents 404s for missing feature", async () => {
+    const res = api.handleFeatureSubagents("nope");
+    expect(res.status).toBe(404);
+  });
+
+  test("handleFeatureSubagentRuns returns the full run list", async () => {
+    const res = api.handleFeatureSubagentRuns("feat/open");
+    expect(res.status).toBe(200);
+    const body = (await (res as any).json()) as any[];
+    expect(body.length).toBe(3);
+    expect(body[0].agent).toBe("Explore");
+    expect(body[0].parent_message_id).toBe("msg-agent-1");
+  });
+
+  test("handleFeatureSubagentRuns 404s for missing feature", async () => {
+    const res = api.handleFeatureSubagentRuns("nope");
+    expect(res.status).toBe(404);
+  });
+
+  test("handleFeatureTools returns the per-tool call counts", async () => {
+    const res = api.handleFeatureTools("feat/open");
+    expect(res.status).toBe(200);
+    const body = (await (res as any).json()) as any[];
+    const byName = Object.fromEntries(body.map((c: any) => [c.tool_name, c.calls]));
+    expect(byName["Read"]).toBe(2);
+    expect(byName["Bash"]).toBe(2);
+  });
+
+  test("handleFeatureTools 404s for missing feature", async () => {
+    const res = api.handleFeatureTools("nope");
+    expect(res.status).toBe(404);
+  });
+
+  test("handleTopSubagents returns the cross-feature rollup", async () => {
+    const res = api.handleTopSubagents(new URL("http://x/api/subagents/top?limit=5"));
+    expect(res.status).toBe(200);
+    const body = (await (res as any).json()) as any[];
+    expect(body.length).toBe(2);
+    expect(body[0].agent).toBe("Explore");
+  });
+
+  test("handleTopSubagents validates limit", async () => {
+    const res = api.handleTopSubagents(new URL("http://x/api/subagents/top?limit=abc"));
+    expect(res.status).toBe(400);
+    const res2 = api.handleTopSubagents(new URL("http://x/api/subagents/top?limit=0"));
+    expect(res2.status).toBe(400);
+  });
+
+  test("exportLedger includes subagent_runs and tool_calls", () => {
+    const data = db.exportLedger();
+    expect(data.subagent_runs.length).toBe(4); // 3 in feat/open + 1 in feat/done
+    expect(data.tool_calls.length).toBe(5);
+    // Spot-check shape
+    const sr = data.subagent_runs[0] as Record<string, unknown>;
+    expect(sr.agent).toBeDefined();
+    expect(sr.parent_message_id).toBeDefined();
   });
 });
 
