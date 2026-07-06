@@ -11,7 +11,15 @@
  *   /feature set-cap <usd>     (0 or negative to clear)
  *   /feature reopen
  *
- * Phase 5 will add: dashboard, open, note, tag, merge, search, export.
+ * Phase 4 adds: dashboard, open, set-port.
+ *
+ * Phase 5 adds:
+ *   /feature note <text>
+ *   /feature tag add|remove <t>
+ *   /feature tag list
+ *   /feature merge
+ *   /feature search <query>
+ *   /feature export csv|json
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -25,6 +33,15 @@ import {
   renameFeature,
   setCap,
   reopenFeature,
+  mergeFeature,
+  addTag,
+  removeTag,
+  listTags,
+  searchFeatures,
+  attachNote,
+  getNotes,
+  exportLedger,
+  exportLedgerCsv,
   LifecycleError,
   type Feature,
 } from "./lifecycle.js";
@@ -58,6 +75,8 @@ export function registerCommands(pi: ExtensionAPI, deps: CommandDeps): void {
             return doClose(ctx, deps, rest);
           case "cancel":
             return doCancel(ctx, deps, rest);
+          case "merge":
+            return doMerge(ctx, deps, rest);
           case "rename":
             return doRename(ctx, deps, rest);
           case "set-cap":
@@ -65,6 +84,14 @@ export function registerCommands(pi: ExtensionAPI, deps: CommandDeps): void {
             return doSetCap(ctx, deps, rest);
           case "reopen":
             return doReopen(ctx, deps);
+          case "tag":
+            return doTag(ctx, deps, rest);
+          case "note":
+            return doNote(ctx, deps, rest);
+          case "search":
+            return doSearch(ctx, deps, rest);
+          case "export":
+            return doExport(ctx, deps, rest);
           case "dashboard":
             return doDashboard(ctx, deps, rest);
           case "open":
@@ -92,22 +119,32 @@ export function registerCommands(pi: ExtensionAPI, deps: CommandDeps): void {
 
 async function showHelp(ctx: ExtensionContext): Promise<void> {
   const text =
-    `Costlens — feature-based cost tracking (Phase 4)
+    `Costlens — feature-based cost tracking (Phase 5)
 
 View:
   /feature help                   This help
-  /feature status                 Current feature detail (cost, cap, model breakdown)
-  /feature list                   All features, sorted by recent activity
+  /feature status                 Current feature detail (cost, cap, model breakdown, tags)
+  /feature list                   All features (name, status, tags, cost, last)
+  /feature search <query>         Find features by id/name fragment
 
 Manage the current feature:
-  /feature close [note]           Mark done; cost frozen (note optional)
+  /feature close [note]           Mark done; cost frozen
   /feature cancel [note]          Mark abandoned; cost frozen
-  /feature reopen                 Re-open a closed/cancelled feature
+  /feature merge [note]           Mark merged; cost frozen (third "ended" state)
+  /feature reopen                 Re-open a closed/cancelled/merged feature
   /feature rename <name>          Rename the feature (id & branch stay the same)
   /feature set-cap <usd>          Soft cap; pass 0 to clear
                                   Warns in the footer at 80% and over 100%
+  /feature note <text>            Attach a note (timestamped, standalone)
+  /feature tag add <t>            Tag the current feature (free-form, lowercased)
+  /feature tag remove <t>         Remove a tag
+  /feature tag list               List tags on the current feature
 
-Dashboard (Phase 4):
+Export (stdout):
+  /feature export json            Full ledger as JSON
+  /feature export csv             Full ledger as CSV (5 sections)
+
+Dashboard:
   /feature dashboard              Start server + open browser to overview
   /feature dashboard --detach     Start server that survives pi exit
   /feature dashboard stop         Kill the running server
@@ -115,14 +152,15 @@ Dashboard (Phase 4):
   /feature set-port <N>           Set the dashboard port (1..65535)
 
 Examples:
+  /feature tag add client:acme
+  /feature note handed off to jane
   /feature close shipped to prod
   /feature rename Auth refactor
   /feature set-cap 5
   /feature set-cap 0              # clear the cap
-  /feature set-port 8080
+  /feature search auth
+  /feature export json > backup.json
   /feature dashboard
-
-Phase 5: tags, notes, merge, search, export
 
 See PLAN.md for the full roadmap.`;
   await ctx.ui.notify(text, "info");
@@ -174,6 +212,9 @@ async function showStatus(ctx: ExtensionContext, deps: CommandDeps): Promise<voi
       output_tokens: number;
     }>;
 
+  const tags = listTags(featureId);
+  const notes = getNotes(featureId);
+
   const lines: string[] = [];
   lines.push(`● ${feature.name}  (${feature.status})`);
   if (feature.branch) lines.push(`  branch: ${feature.branch}`);
@@ -188,7 +229,21 @@ async function showStatus(ctx: ExtensionContext, deps: CommandDeps): Promise<voi
       ` · cache r ${feature.total_cache_read} · w ${feature.total_cache_write}`
   );
   lines.push(`  turns:   ${feature.turn_count}`);
-  lines.push(`  pricing: ${feature.pricing_conf}`);
+  // Pricing confidence badge (Phase 5): flag uncertainty prominently.
+  const confBadge = feature.pricing_conf === "complete"
+    ? "complete"
+    : `complete? (${feature.pricing_conf})`;
+  lines.push(`  pricing: ${confBadge}`);
+  if (tags.length > 0) {
+    lines.push(`  tags:    ${tags.join(", ")}`);
+  }
+  if (notes.length > 0) {
+    lines.push(`  notes:`);
+    for (const n of notes) {
+      const ts = n.created_at.replace("T", " ").slice(0, 19);
+      lines.push(`    [${ts}]  ${n.body}`);
+    }
+  }
   if (models.length > 0) {
     lines.push(`  by model:`);
     for (const m of models) {
@@ -207,26 +262,42 @@ async function showList(ctx: ExtensionContext, deps: CommandDeps): Promise<void>
     await ctx.ui.notify("Costlens: no features yet. Start one with /feature on a non-main branch.", "info");
     return;
   }
+  // Pull tags for each feature in a single query, indexed by id.
+  const tagRows = deps
+    .getDb()
+    .prepare(`SELECT feature_id, tag FROM tags ORDER BY feature_id, tag`)
+    .all() as Array<{ feature_id: string; tag: string }>;
+  const tagsByFeature = new Map<string, string[]>();
+  for (const r of tagRows) {
+    const arr = tagsByFeature.get(r.feature_id) ?? [];
+    arr.push(r.tag);
+    tagsByFeature.set(r.feature_id, arr);
+  }
   // Compact table.
   const lines: string[] = [];
   lines.push(
-    "feature".padEnd(34) +
-      "status".padEnd(11) +
+    "feature".padEnd(28) +
+      "status".padEnd(10) +
+      "tags".padEnd(22) +
       "turns".padStart(5) +
       "  cost".padStart(11) +
       "  cap".padStart(8) +
       "  last"
   );
-  lines.push("-".repeat(80));
+  lines.push("-".repeat(96));
   for (const f of features) {
     const cap = f.cap_usd ? `$${f.cap_usd.toFixed(2)}` : "-";
     const last = f.last_activity_at
       ? new Date(f.last_activity_at).toISOString().slice(0, 16).replace("T", " ")
       : "-";
     const over = f.cap_usd && f.total_cost_usd > f.cap_usd ? "!" : " ";
+    const tags = tagsByFeature.get(f.id) ?? [];
+    const tagsStr = tags.length === 0 ? "—" : tags.join(", ");
+    const name = (f.id === "unassigned" ? "unassigned" : f.name).padEnd(28).slice(0, 28);
     lines.push(
-      (f.id === "unassigned" ? "unassigned" : f.name).padEnd(34).slice(0, 34) +
-        ` ${f.status.padEnd(10)}` +
+      name +
+        ` ${f.status.padEnd(9)}` +
+        tagsStr.padEnd(22).slice(0, 22) +
         String(f.turn_count).padStart(5) +
         over +
         "  $" +
@@ -238,8 +309,6 @@ async function showList(ctx: ExtensionContext, deps: CommandDeps): Promise<void>
     );
   }
   await ctx.ui.notify(lines.join("\n"), "info");
-  // touch deps to silence unused
-  void deps;
 }
 
 async function doClose(ctx: ExtensionContext, deps: CommandDeps, note: string): Promise<void> {
@@ -267,6 +336,22 @@ async function doCancel(ctx: ExtensionContext, deps: CommandDeps, note: string):
   deps.refreshFooter(ctx);
   await ctx.ui.notify(
     `Costlens: cancelled "${f.name}" as abandoned. Cost frozen at $${f.total_cost_usd.toFixed(4)} across ${f.turn_count} turn${f.turn_count === 1 ? "" : "s"}.` +
+      (note ? `\n  note: ${note}` : ""),
+    "info"
+  );
+}
+
+async function doMerge(ctx: ExtensionContext, deps: CommandDeps, note: string): Promise<void> {
+  const id = getCurrentFeatureId(ctx);
+  if (!id) {
+    await ctx.ui.notify("Costlens: no active feature to merge.", "warning");
+    return;
+  }
+  const f = mergeFeature(id, note);
+  deps.refreshFooter(ctx);
+  await ctx.ui.notify(
+    `Costlens: merged "${f.name}". Cost frozen at $${f.total_cost_usd.toFixed(4)} across ${f.turn_count} turn${f.turn_count === 1 ? "" : "s"}. ` +
+      `Use /feature reopen to continue tracking on the same id.` +
       (note ? `\n  note: ${note}` : ""),
     "info"
   );
@@ -319,6 +404,141 @@ async function doReopen(ctx: ExtensionContext, deps: CommandDeps): Promise<void>
   const f = reopenFeature(id);
   deps.refreshFooter(ctx);
   await ctx.ui.notify(`Costlens: reopened "${f.name}" (status: ${f.status}).`, "info");
+}
+
+async function doTag(ctx: ExtensionContext, _deps: CommandDeps, rest: string): Promise<void> {
+  const id = getCurrentFeatureId(ctx);
+  if (!id) {
+    await ctx.ui.notify("Costlens: no active feature to tag.", "warning");
+    return;
+  }
+  // Tokenise: first word is the subaction, rest is the tag (which may
+  // contain spaces — we re-join everything after the first word).
+  const trimmed = rest.trim();
+  if (!trimmed) {
+    await ctx.ui.notify(
+      `Costlens: usage: /feature tag add|remove|list [tag]`,
+      "warning"
+    );
+    return;
+  }
+  const space = trimmed.search(/\s/);
+  const action = space === -1 ? trimmed : trimmed.slice(0, space);
+  const tagInput = space === -1 ? "" : trimmed.slice(space + 1).trim();
+  switch (action) {
+    case "list": {
+      const tags = listTags(id);
+      if (tags.length === 0) {
+        await ctx.ui.notify(`Costlens: no tags on "${id}". Add one with /feature tag add <t>.`, "info");
+      } else {
+        await ctx.ui.notify(`Costlens: tags on "${id}":\n  ${tags.join("\n  ")}`, "info");
+      }
+      return;
+    }
+    case "add": {
+      if (!tagInput) {
+        await ctx.ui.notify("Costlens: usage: /feature tag add <tag>", "warning");
+        return;
+      }
+      const tag = addTag(id, tagInput);
+      await ctx.ui.notify(`Costlens: added tag "${tag}" to "${id}".`, "info");
+      return;
+    }
+    case "remove":
+    case "rm": {
+      if (!tagInput) {
+        await ctx.ui.notify("Costlens: usage: /feature tag remove <tag>", "warning");
+        return;
+      }
+      const removed = removeTag(id, tagInput);
+      if (removed) {
+        await ctx.ui.notify(`Costlens: removed tag "${tagInput.trim().toLowerCase()}" from "${id}".`, "info");
+      } else {
+        await ctx.ui.notify(`Costlens: tag "${tagInput.trim().toLowerCase()}" was not on "${id}".`, "info");
+      }
+      return;
+    }
+    default:
+      await ctx.ui.notify(
+        `Costlens: unknown tag action "${action}". Use add, remove, or list.`,
+        "warning"
+      );
+  }
+}
+
+async function doNote(ctx: ExtensionContext, _deps: CommandDeps, rest: string): Promise<void> {
+  const id = getCurrentFeatureId(ctx);
+  if (!id) {
+    await ctx.ui.notify("Costlens: no active feature to attach a note to.", "warning");
+    return;
+  }
+  const body = rest.trim();
+  if (!body) {
+    await ctx.ui.notify("Costlens: usage: /feature note <text>", "warning");
+    return;
+  }
+  attachNote(id, body);
+  await ctx.ui.notify(`Costlens: note attached to "${id}".`, "info");
+}
+
+async function doSearch(ctx: ExtensionContext, _deps: CommandDeps, rest: string): Promise<void> {
+  const q = rest.trim();
+  if (!q) {
+    await ctx.ui.notify("Costlens: usage: /feature search <query>", "warning");
+    return;
+  }
+  const matches = searchFeatures(q);
+  if (matches.length === 0) {
+    await ctx.ui.notify(`Costlens: no features match "${q}".`, "info");
+    return;
+  }
+  const lines: string[] = [];
+  lines.push(
+    "feature".padEnd(30) +
+      "status".padEnd(10) +
+      "turns".padStart(5) +
+      "  cost".padStart(11) +
+      "  last"
+  );
+  lines.push("-".repeat(72));
+  for (const f of matches) {
+    const last = f.last_activity_at
+      ? new Date(f.last_activity_at).toISOString().slice(0, 16).replace("T", " ")
+      : "-";
+    lines.push(
+      (f.id === "unassigned" ? "unassigned" : f.name).padEnd(30).slice(0, 30) +
+        ` ${f.status.padEnd(9)}` +
+        String(f.turn_count).padStart(5) +
+        "  $" +
+        f.total_cost_usd.toFixed(4).padStart(8) +
+        "  " +
+        last
+    );
+  }
+  lines.push("");
+  lines.push(`${matches.length} match${matches.length === 1 ? "" : "es"} for "${q}".`);
+  await ctx.ui.notify(lines.join("\n"), "info");
+}
+
+async function doExport(ctx: ExtensionContext, _deps: CommandDeps, rest: string): Promise<void> {
+  const fmt = rest.trim().toLowerCase();
+  if (fmt !== "json" && fmt !== "csv") {
+    await ctx.ui.notify(
+      `Costlens: usage: /feature export <json|csv>\nWrites to stdout. Pipe to a file if you want to save it.`,
+      "warning"
+    );
+    return;
+  }
+  if (fmt === "json") {
+    const data = exportLedger();
+    // Always print to stdout, regardless of UI mode — the user asked for
+    // a dump, not an in-pi notification.
+    process.stdout.write(JSON.stringify(data, null, 2) + "\n");
+    return;
+  }
+  // CSV
+  const csv = exportLedgerCsv();
+  process.stdout.write(csv + "\n");
 }
 
 async function doDashboard(ctx: ExtensionContext, _deps: CommandDeps, rest: string): Promise<void> {

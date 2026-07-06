@@ -19,9 +19,14 @@ import { openDb, closeDb } from "./db.js";
 import {
   handleFeatures,
   handleFeature,
+  handleFeatureTags,
+  handleFeatureNotes,
   handleHealth,
   handleMessages,
   handleOverview,
+  handleAllTags,
+  handleExportCsv,
+  handleExportJson,
   type RouteContext,
 } from "./api.js";
 import { getCostlensHome, readConfig } from "./config.js";
@@ -30,7 +35,7 @@ import { DEFAULT_PORT, findFreePort } from "./port.js";
 const COSTLENS_HOME = getCostlensHome();
 const DB_PATH = join(COSTLENS_HOME, "ledger.db");
 const STARTED_AT = new Date().toISOString();
-const VERSION = "0.4.0";
+const VERSION = "0.5.0";
 
 // Web assets live in server/web/ alongside this file.
 const WEB_DIR = join(dirname(import.meta.path), "web");
@@ -101,13 +106,18 @@ const server = Bun.serve({
       // API routes
       if (path === "/api/health") return handleHealth(ctx, REQUESTED_PORT);
       if (path === "/api/overview") return handleOverview();
-      if (path === "/api/features") return handleFeatures();
+      if (path === "/api/features") return handleFeatures(url);
+      if (path === "/api/tags") return handleAllTags();
+      if (path === "/api/export.json") return handleExportJson();
+      if (path === "/api/export.csv") return handleExportCsv();
 
-      const featureMatch = path.match(/^\/api\/features\/([^/]+)(?:\/(messages))?$/);
+      const featureMatch = path.match(/^\/api\/features\/([^/]+)(?:\/(messages|tags|notes))?$/);
       if (featureMatch) {
         const id = decodeURIComponent(featureMatch[1]);
         const sub = featureMatch[2];
         if (sub === "messages") return handleMessages(id, url);
+        if (sub === "tags") return handleFeatureTags(id);
+        if (sub === "notes") return handleFeatureNotes(id);
         return handleFeature(id);
       }
 

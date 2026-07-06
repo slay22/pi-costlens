@@ -427,6 +427,241 @@ describe("listFeatures", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Phase 5: merge / tags / notes / search / export
+// ---------------------------------------------------------------------------
+
+describe("mergeFeature", () => {
+  test("sets status to 'merged' and records closed_at", async () => {
+    const { mergeFeature } = await import("../extension/lifecycle.js");
+    const f = await openFeature("merge-1");
+    const m = mergeFeature(f.id);
+    assert.equal(m.status, "merged");
+    assert.notEqual(m.closed_at, null);
+  });
+
+  test("attaches a note when provided", async () => {
+    const { mergeFeature, getNotes } = await import("../extension/lifecycle.js");
+    const f = await openFeature("merge-2");
+    mergeFeature(f.id, "merged to main");
+    const notes = getNotes(f.id);
+    assert.equal(notes.length, 1);
+    assert.equal(notes[0].body, "merged to main");
+  });
+
+  test("refuses to merge an already-merged feature", async () => {
+    const { mergeFeature, LifecycleError } = await import("../extension/lifecycle.js");
+    const f = await openFeature("merge-3");
+    mergeFeature(f.id);
+    assert.throws(() => mergeFeature(f.id), (err: unknown) => {
+      return err instanceof LifecycleError && err.code === "INVALID_STATE";
+    });
+  });
+
+  test("reopen from merged restores the feature to open", async () => {
+    const { mergeFeature, reopenFeature } = await import("../extension/lifecycle.js");
+    const f = await openFeature("merge-4");
+    mergeFeature(f.id);
+    const r = reopenFeature(f.id);
+    assert.equal(r.status, "open");
+    assert.equal(r.closed_at, null);
+  });
+
+  test("refuses to merge the unassigned pool", async () => {
+    const { mergeFeature, LifecycleError } = await import("../extension/lifecycle.js");
+    assert.throws(() => mergeFeature("unassigned"), (err: unknown) => {
+      return err instanceof LifecycleError && err.code === "UNASSIGNED";
+    });
+  });
+});
+
+describe("addTag / removeTag / listTags / listAllTags", () => {
+  test("addTag lowercases and trims, returning the normalised value", async () => {
+    const { addTag, listTags } = await import("../extension/lifecycle.js");
+    const f = await openFeature("tags-1");
+    const t = addTag(f.id, "  Client:Acme  ");
+    assert.equal(t, "client:acme");
+    assert.deepEqual(listTags(f.id), ["client:acme"]);
+  });
+
+  test("addTag is idempotent (no duplicate rows)", async () => {
+    const { addTag, listTags } = await import("../extension/lifecycle.js");
+    const { getDb } = await import("../extension/db.js");
+    const f = await openFeature("tags-2");
+    addTag(f.id, "backend");
+    addTag(f.id, "backend");
+    addTag(f.id, "BACKEND");
+    assert.deepEqual(listTags(f.id), ["backend"]);
+    const row = getDb()
+      .prepare(`SELECT COUNT(*) AS c FROM tags WHERE feature_id = ? AND tag = ?`)
+      .get(f.id, "backend") as { c: number };
+    assert.equal(row.c, 1);
+  });
+
+  test("listTags returns tags sorted", async () => {
+    const { addTag, listTags } = await import("../extension/lifecycle.js");
+    const f = await openFeature("tags-3");
+    addTag(f.id, "zeta");
+    addTag(f.id, "alpha");
+    addTag(f.id, "mu");
+    assert.deepEqual(listTags(f.id), ["alpha", "mu", "zeta"]);
+  });
+
+  test("removeTag deletes an existing tag and reports the change", async () => {
+    const { addTag, removeTag, listTags } = await import("../extension/lifecycle.js");
+    const f = await openFeature("tags-4");
+    addTag(f.id, "to-go");
+    const removed = removeTag(f.id, "to-go");
+    assert.equal(removed, true);
+    assert.deepEqual(listTags(f.id), []);
+  });
+
+  test("removeTag normalises the input (case-insensitive match)", async () => {
+    const { addTag, removeTag, listTags } = await import("../extension/lifecycle.js");
+    const f = await openFeature("tags-5");
+    addTag(f.id, "Backend");
+    const removed = removeTag(f.id, "  BACKEND  ");
+    assert.equal(removed, true);
+    assert.deepEqual(listTags(f.id), []);
+  });
+
+  test("removing a non-existent tag is a no-op (returns false)", async () => {
+    const { removeTag } = await import("../extension/lifecycle.js");
+    const f = await openFeature("tags-6");
+    const removed = removeTag(f.id, "nope");
+    assert.equal(removed, false);
+  });
+
+  test("addTag refuses to tag the unassigned pool", async () => {
+    const { addTag, LifecycleError } = await import("../extension/lifecycle.js");
+    assert.throws(() => addTag("unassigned", "x"), (err: unknown) => {
+      return err instanceof LifecycleError && err.code === "UNASSIGNED";
+    });
+  });
+
+  test("addTag refuses empty / whitespace tags", async () => {
+    const { addTag, LifecycleError } = await import("../extension/lifecycle.js");
+    const f = await openFeature("tags-7");
+    assert.throws(() => addTag(f.id, "   "), (err: unknown) => {
+      return err instanceof LifecycleError && err.code === "INVALID_STATE";
+    });
+  });
+
+  test("listAllTags returns unique tags across the ledger with counts", async () => {
+    const { addTag, listAllTags } = await import("../extension/lifecycle.js");
+    const a = await openFeature("tags-a");
+    const b = await openFeature("tags-b");
+    addTag(a.id, "client:acme");
+    addTag(a.id, "v1");
+    addTag(b.id, "client:acme");
+    addTag(b.id, "backend");
+    const all = listAllTags();
+    const byTag = new Map(all.map((t) => [t.tag, t.count]));
+    assert.equal(byTag.get("client:acme"), 2);
+    assert.equal(byTag.get("v1"), 1);
+    assert.equal(byTag.get("backend"), 1);
+  });
+});
+
+describe("attachNote + listNotes", () => {
+  test("attachNote stores a timestamped note; listNotes returns them in order", async () => {
+    const { attachNote, listNotes } = await import("../extension/lifecycle.js");
+    const f = await openFeature("note-1");
+    attachNote(f.id, "first");
+    // Slightly later so timestamps are ordered deterministically
+    await new Promise((r) => setTimeout(r, 5));
+    attachNote(f.id, "second");
+    const notes = listNotes(f.id);
+    assert.equal(notes.length, 2);
+    assert.equal(notes[0].body, "first");
+    assert.equal(notes[1].body, "second");
+    assert.ok(notes[0].created_at < notes[1].created_at);
+  });
+
+  test("attachNote ignores empty / whitespace-only bodies", async () => {
+    const { attachNote, listNotes } = await import("../extension/lifecycle.js");
+    const f = await openFeature("note-2");
+    attachNote(f.id, "   ");
+    attachNote(f.id, "");
+    assert.equal(listNotes(f.id).length, 0);
+  });
+});
+
+describe("searchFeatures", () => {
+  test("matches id and name substrings, case-insensitive", async () => {
+    const { searchFeatures } = await import("../extension/lifecycle.js");
+    await openFeature("auth-login");
+    await openFeature("billing-report");
+    await openFeature("unrelated");
+    const byId = searchFeatures("AUTH");
+    assert.equal(byId.length, 1);
+    assert.equal(byId[0].id, "auth-login");
+    const byName = searchFeatures("Report");
+    assert.equal(byName.length, 1);
+    assert.equal(byName[0].id, "billing-report");
+  });
+
+  test("returns empty array for no match or empty query", async () => {
+    const { searchFeatures } = await import("../extension/lifecycle.js");
+    await openFeature("search-a");
+    assert.equal(searchFeatures("").length, 0);
+    assert.equal(searchFeatures("   ").length, 0);
+    assert.equal(searchFeatures("zzz-nope").length, 0);
+  });
+
+  test("does not treat % or _ as wildcards (instr-based, literal match)", async () => {
+    const { searchFeatures } = await import("../extension/lifecycle.js");
+    await openFeature("lit-eral");
+    // `%` should not match every feature; it should only match a literal `%`.
+    assert.equal(searchFeatures("%").length, 0);
+    assert.equal(searchFeatures("_").length, 0);
+  });
+});
+
+describe("exportLedger + exportLedgerCsv", () => {
+  test("exportLedger returns all tables in one object", async () => {
+    const { addTag, attachNote, exportLedger } = await import("../extension/lifecycle.js");
+    const { getDb } = await import("../extension/db.js");
+    const f = await openFeature("exp-1");
+    addTag(f.id, "client:acme");
+    attachNote(f.id, "a note");
+    const data = exportLedger();
+    assert.equal(typeof data.exportedAt, "string");
+    assert.ok(Array.isArray(data.features));
+    assert.ok(Array.isArray(data.messages));
+    assert.ok(Array.isArray(data.notes));
+    assert.ok(Array.isArray(data.tags));
+    assert.ok(Array.isArray(data.sessions));
+    // Our feature is in the export
+    assert.ok(data.features.some((row) => row.id === f.id));
+    assert.ok(data.tags.some((row) => row.tag === "client:acme"));
+    assert.ok(data.notes.some((row) => row.body === "a note"));
+  });
+
+  test("exportLedgerCsv has 5 sections with header lines", async () => {
+    const { addTag, exportLedgerCsv } = await import("../extension/lifecycle.js");
+    const f = await openFeature("exp-2");
+    addTag(f.id, "v1");
+    const csv = exportLedgerCsv();
+    const sectionCount = (csv.match(/^# /gm) ?? []).length;
+    assert.equal(sectionCount, 5, `expected 5 section markers, got ${sectionCount}`);
+    // Each section has a header row directly after the marker
+    assert.match(csv, /# features\nid,name,branch,status/);
+    assert.match(csv, /# messages\nid,feature_id,session_id/);
+    assert.match(csv, /# notes\nid,feature_id,body,created_at/);
+    assert.match(csv, /# tags\nfeature_id,tag/);
+    assert.match(csv, /# sessions\nid,feature_id,cwd,started_at,last_seen/);
+  });
+
+  test("exportLedgerCsv quotes values containing commas", async () => {
+    const { attachNote, exportLedgerCsv } = await import("../extension/lifecycle.js");
+    const f = await openFeature("exp-3");
+    attachNote(f.id, 'with, comma and "quote"');
+    const csv = exportLedgerCsv();
+    assert.ok(csv.includes('"with, comma and ""quote"""'), `csv was: ${csv}`);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // feature total rollup + pricing confidence (Phase 1 regression tests)
 // ---------------------------------------------------------------------------
 

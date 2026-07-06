@@ -216,6 +216,17 @@ function render(f, msgs) {
   $("#detail-cache-w").textContent = fmtInt(f.total_cache_write);
   $("#detail-models").textContent = f.recentModels?.join(", ") || "—";
 
+  // Tags
+  const tagsCard = $("#tags-card");
+  if (f.tags && f.tags.length > 0) {
+    tagsCard.hidden = false;
+    $("#tags-list").innerHTML = f.tags
+      .map((t) => `<span class="tag ${tagClass(t)}">${escape(t)}</span>`)
+      .join(" ");
+  } else {
+    tagsCard.hidden = true;
+  }
+
   // Notes
   const notesCard = $("#notes-card");
   if (f.notes && f.notes.length > 0) {
@@ -255,6 +266,15 @@ function escape(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
   })[c]);
+}
+
+/** Map a tag like "client:acme" to a CSS class for colour hints. */
+function tagClass(tag) {
+  const prefix = tag.split(/[:.]/)[0].toLowerCase();
+  if (["client", "project", "type", "env", "team", "area"].includes(prefix)) {
+    return `tag-${prefix}`;
+  }
+  return "";
 }
 
 $("#refresh").addEventListener("click", load);

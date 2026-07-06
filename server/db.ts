@@ -63,6 +63,7 @@ export type Overview = {
     cost: number;
     turns: number;
     status: string;
+    tags: string[];
   }>;
   byDay: Array<{ date: string; cost: number; turns: number }>;
   byModel: Array<{
@@ -120,6 +121,140 @@ export function getAllFeatures(): Feature[] {
        ORDER BY COALESCE(last_activity_at, started_at) DESC`
     )
     .all() as Feature[];
+}
+
+/**
+ * Case-insensitive substring match on `id` and `name`. Uses `instr()`
+ * so the query string is treated literally (no LIKE wildcards).
+ */
+export function searchFeatures(query: string): Feature[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  return getDb()
+    .prepare(
+      `SELECT * FROM features
+       WHERE instr(LOWER(id), ?) > 0
+          OR instr(LOWER(name), ?) > 0
+       ORDER BY COALESCE(last_activity_at, started_at) DESC`
+    )
+    .all(q, q) as Feature[];
+}
+
+/**
+ * All unique tags across the ledger, sorted, with the count of features
+ * carrying each tag. Mirrors `lifecycle.listAllTags()` for the read-only
+ * server side.
+ */
+export function getAllTags(): Array<{ tag: string; count: number }> {
+  return getDb()
+    .prepare(
+      `SELECT tag, COUNT(*) AS count
+       FROM tags
+       GROUP BY tag
+       ORDER BY tag`
+    )
+    .all() as Array<{ tag: string; count: number }>;
+}
+
+/**
+ * Dumps the full ledger as a plain object. Same shape as the extension
+ * side's `exportLedger()`. Used by both `/api/export.json` and the
+ * dashboard's export button.
+ */
+export type LedgerExport = {
+  exportedAt: string;
+  features: Feature[];
+  messages: Array<Record<string, unknown>>;
+  notes: Array<{ id: number; feature_id: string; body: string; created_at: string }>;
+  tags: Array<{ feature_id: string; tag: string }>;
+  sessions: Array<{ id: string; feature_id: string; cwd: string; started_at: string; last_seen: string }>;
+};
+
+export function exportLedger(): LedgerExport {
+  const db = getDb();
+  return {
+    exportedAt: new Date().toISOString(),
+    features: db
+      .prepare(`SELECT * FROM features ORDER BY id`)
+      .all() as Feature[],
+    messages: db
+      .prepare(
+        `SELECT id, feature_id, session_id, model, provider,
+                input_tokens, output_tokens, cache_read, cache_write,
+                cost_usd, cost_input, cost_output, cost_cache_read, cost_cache_write,
+                cost_unknown, timestamp, branch_path
+         FROM messages ORDER BY feature_id, timestamp`
+      )
+      .all() as Array<Record<string, unknown>>,
+    notes: db
+      .prepare(`SELECT id, feature_id, body, created_at FROM notes ORDER BY id`)
+      .all() as Array<{ id: number; feature_id: string; body: string; created_at: string }>,
+    tags: db
+      .prepare(`SELECT feature_id, tag FROM tags ORDER BY feature_id, tag`)
+      .all() as Array<{ feature_id: string; tag: string }>,
+    sessions: db
+      .prepare(
+        `SELECT id, feature_id, cwd, started_at, last_seen FROM sessions ORDER BY id`
+      )
+      .all() as Array<{ id: string; feature_id: string; cwd: string; started_at: string; last_seen: string }>,
+  };
+}
+
+/**
+ * Render the ledger as CSV. Mirrors the extension side's
+ * `exportLedgerCsv()`. One section per table, separated by blank lines,
+ * with a leading `# <name>` marker per section.
+ */
+export function exportLedgerCsv(): string {
+  const data = exportLedger();
+  const sections: string[] = [];
+  sections.push(
+    csvSection("features", [
+      "id", "name", "branch", "status", "cap_usd", "started_at", "closed_at",
+      "pricing_conf", "total_cost_usd", "total_input", "total_output",
+      "total_cache_read", "total_cache_write", "turn_count",
+      "first_activity_at", "last_activity_at",
+    ], data.features as unknown as Array<Record<string, unknown>>)
+  );
+  sections.push(
+    csvSection("messages", [
+      "id", "feature_id", "session_id", "model", "provider", "input_tokens",
+      "output_tokens", "cache_read", "cache_write", "cost_usd", "cost_input",
+      "cost_output", "cost_cache_read", "cost_cache_write", "cost_unknown",
+      "timestamp", "branch_path",
+    ], data.messages)
+  );
+  sections.push(
+    csvSection("notes", ["id", "feature_id", "body", "created_at"], data.notes)
+  );
+  sections.push(
+    csvSection("tags", ["feature_id", "tag"], data.tags)
+  );
+  sections.push(
+    csvSection("sessions", ["id", "feature_id", "cwd", "started_at", "last_seen"], data.sessions)
+  );
+  return sections.join("\n");
+}
+
+function csvSection(
+  name: string,
+  columns: string[],
+  rows: Array<Record<string, unknown>>
+): string {
+  const lines: string[] = [`# ${name}`, columns.join(",")];
+  for (const r of rows) {
+    lines.push(columns.map((c) => csvCell(r[c])).join(","));
+  }
+  return lines.join("\n");
+}
+
+function csvCell(v: unknown): string {
+  if (v == null) return "";
+  const s = String(v);
+  if (/[",\n\r]/.test(s)) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
 }
 
 export function getFeature(id: string): Feature | null {
@@ -223,7 +358,11 @@ export function getOverview(): Overview {
 
   const topFeatures = db
     .prepare(
-      `SELECT id, name, total_cost_usd AS cost, turn_count AS turns, status
+      `SELECT id, name, total_cost_usd AS cost, turn_count AS turns, status,
+              (SELECT GROUP_CONCAT(tag, ',')
+                 FROM tags
+                 WHERE tags.feature_id = features.id
+                 ORDER BY tag) AS tags_csv
        FROM features
        WHERE id != 'unassigned'
        ORDER BY total_cost_usd DESC
@@ -235,6 +374,7 @@ export function getOverview(): Overview {
       cost: number;
       turns: number;
       status: string;
+      tags_csv: string | null;
     }>;
 
   // byDay covers the last 30 days; missing days are filled with zeros
@@ -307,7 +447,14 @@ export function getOverview(): Overview {
     totalTurns: totalRow.turns,
     totalFeatures,
     currentFeature: currentRow ?? null,
-    topFeatures,
+    topFeatures: topFeatures.map((f) => ({
+      id: f.id,
+      name: f.name,
+      cost: f.cost,
+      turns: f.turns,
+      status: f.status,
+      tags: f.tags_csv ? f.tags_csv.split(",") : [],
+    })),
     byDay,
     byModel,
     byStatus,
