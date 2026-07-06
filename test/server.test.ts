@@ -514,6 +514,330 @@ describe("db + api", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Phase 7.5: write endpoints
+// ---------------------------------------------------------------------------
+
+function makeReq(method: string, body?: unknown): Request {
+  return new Request("http://x/", {
+    method,
+    headers: { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+describe("write endpoints (Phase 7.5)", () => {
+  // The write tests mutate the seeded DB. Re-seed before this block
+  // so the test order is independent of how the read-only block
+  // above interacted with the fixtures. And reset feat/open to
+  // 'open' between tests so each test sees a fresh open feature.
+  beforeAll(() => {
+    db.closeDb();
+    seed();
+    db.openDb(DB_PATH);
+  });
+  beforeEach(() => {
+    db.getDb().exec(`
+      UPDATE features SET status = 'open', closed_at = NULL WHERE id = 'feat/open';
+      UPDATE features SET status = 'done', closed_at = '2026-06-29T10:00:00Z' WHERE id = 'feat/done';
+      DELETE FROM tags WHERE feature_id IN ('feat/open', 'feat/done');
+      INSERT OR IGNORE INTO tags (feature_id, tag) VALUES ('feat/open', 'backend');
+      INSERT OR IGNORE INTO tags (feature_id, tag) VALUES ('feat/open', 'v1');
+      DELETE FROM notes WHERE feature_id IN ('feat/open', 'feat/done');
+      INSERT OR IGNORE INTO notes (id, feature_id, body, created_at) VALUES (1, 'feat/open', 'started work', '2026-06-30T10:30:00Z');
+      INSERT OR IGNORE INTO notes (id, feature_id, body, created_at) VALUES (2, 'feat/open', 'finished backend', '2026-07-01T10:00:00Z');
+      DELETE FROM sqlite_sequence WHERE name = 'notes';
+    `);
+  });
+
+  describe("POST /api/features/:id/close", () => {
+    test("closes an open feature", async () => {
+      const res = await api.handleClose("feat/open", makeReq("POST"));
+      expect(res.status).toBe(200);
+      const body = (await (res as any).json()) as any;
+      expect(body.status).toBe("done");
+      expect(body.closed_at).not.toBeNull();
+    });
+
+    test("attaches a note when provided", async () => {
+      const res = await api.handleClose("feat/open", makeReq("POST", { note: "shipped" }));
+      expect(res.status).toBe(200);
+      const notes = db.getNotes("feat/open");
+      // The seeded test had 2 notes; close adds a 3rd.
+      expect(notes.length).toBe(3);
+      expect(notes[notes.length - 1].body).toBe("shipped");
+    });
+
+    test("returns 409 when already closed", async () => {
+      const res = await api.handleClose("feat/done", makeReq("POST"));
+      expect(res.status).toBe(409);
+      const body = (await (res as any).json()) as any;
+      expect(body.error).toBe("lifecycle");
+      expect(body.code).toBe("INVALID_STATE");
+    });
+
+    test("returns 404 when feature does not exist", async () => {
+      const res = await api.handleClose("feat/nope", makeReq("POST"));
+      expect(res.status).toBe(404);
+      const body = (await (res as any).json()) as any;
+      expect(body.code).toBe("NOT_FOUND");
+    });
+
+    test("returns 409 when closing the unassigned pool", async () => {
+      const res = await api.handleClose("unassigned", makeReq("POST"));
+      expect(res.status).toBe(409);
+      const body = (await (res as any).json()) as any;
+      expect(body.code).toBe("UNASSIGNED");
+    });
+  });
+
+  describe("POST /api/features/:id/cancel", () => {
+    test("cancels an open feature", async () => {
+      const res = await api.handleCancel("feat/open", makeReq("POST"));
+      expect(res.status).toBe(200);
+      const body = (await (res as any).json()) as any;
+      expect(body.status).toBe("abandoned");
+    });
+
+    test("attaches a note when provided", async () => {
+      const res = await api.handleCancel("feat/open", makeReq("POST", { note: "abandoned" }));
+      expect(res.status).toBe(200);
+      const notes = db.getNotes("feat/open");
+      expect(notes[notes.length - 1].body).toBe("abandoned");
+    });
+
+    test("returns 409 when not open", async () => {
+      const res = await api.handleCancel("feat/done", makeReq("POST"));
+      expect(res.status).toBe(409);
+      const body = (await (res as any).json()) as any;
+      expect(body.code).toBe("INVALID_STATE");
+    });
+
+    test("returns 409 for unassigned", async () => {
+      const res = await api.handleCancel("unassigned", makeReq("POST"));
+      expect(res.status).toBe(409);
+      const body = (await (res as any).json()) as any;
+      expect(body.code).toBe("UNASSIGNED");
+    });
+  });
+
+  describe("POST /api/features/:id/merge", () => {
+    test("merges an open feature", async () => {
+      const res = await api.handleMerge("feat/open", makeReq("POST"));
+      expect(res.status).toBe(200);
+      const body = (await (res as any).json()) as any;
+      expect(body.status).toBe("merged");
+      expect(body.closed_at).not.toBeNull();
+    });
+
+    test("attaches a note when provided", async () => {
+      // feat/open is now merged from the prior test. Re-seed via
+      // reopen is not enough because the seed has been mutated; use
+      // a fresh feature by directly mutating the DB.
+      db.getDb().prepare(`UPDATE features SET status = 'open', closed_at = NULL WHERE id = 'feat/open'`).run();
+      const res = await api.handleMerge("feat/open", makeReq("POST", { note: "to main" }));
+      expect(res.status).toBe(200);
+      const notes = db.getNotes("feat/open");
+      // The seed had 2 notes; this merge adds a 3rd.
+      expect(notes[notes.length - 1].body).toBe("to main");
+    });
+
+    test("returns 409 when not open", async () => {
+      // Force feat/open into a non-open state for this test (the
+      // beforeEach in the parent block resets it to open).
+      db.getDb().prepare(`UPDATE features SET status = 'done', closed_at = ? WHERE id = 'feat/open'`).run("2026-07-01T00:00:00Z");
+      const res = await api.handleMerge("feat/open", makeReq("POST"));
+      expect(res.status).toBe(409);
+      const body = (await (res as any).json()) as any;
+      expect(body.code).toBe("INVALID_STATE");
+    });
+  });
+
+  describe("POST /api/features/:id/reopen", () => {
+    test("reopens a closed feature", async () => {
+      const res = await api.handleReopen("feat/done");
+      expect(res.status).toBe(200);
+      const body = (await (res as any).json()) as any;
+      expect(body.status).toBe("open");
+      expect(body.closed_at).toBeNull();
+    });
+
+    test("returns 409 when already open", async () => {
+      const res = await api.handleReopen("feat/done"); // first opens it
+      expect(res.status).toBe(200);
+      const res2 = await api.handleReopen("feat/done"); // second is INVALID_STATE
+      expect(res2.status).toBe(409);
+      const body = (await (res2 as any).json()) as any;
+      expect(body.code).toBe("INVALID_STATE");
+    });
+
+    test("returns 404 for missing feature", async () => {
+      const res = await api.handleReopen("feat/nope");
+      expect(res.status).toBe(404);
+    });
+
+    test("returns 409 for unassigned", async () => {
+      const res = await api.handleReopen("unassigned");
+      expect(res.status).toBe(409);
+      const body = (await (res as any).json()) as any;
+      expect(body.code).toBe("UNASSIGNED");
+    });
+  });
+
+  describe("PATCH /api/features/:id/cap", () => {
+    test("sets a cap", async () => {
+      const res = await api.handleSetCap("feat/open", makeReq("PATCH", { capUsd: 7.5 }));
+      expect(res.status).toBe(200);
+      const body = (await (res as any).json()) as any;
+      expect(body.cap_usd).toBe(7.5);
+    });
+
+    test("clears the cap with null", async () => {
+      const res = await api.handleSetCap("feat/open", makeReq("PATCH", { capUsd: null }));
+      expect(res.status).toBe(200);
+      const body = (await (res as any).json()) as any;
+      expect(body.cap_usd).toBeNull();
+    });
+
+    test("clears the cap with 0", async () => {
+      const res = await api.handleSetCap("feat/open", makeReq("PATCH", { capUsd: 0 }));
+      expect(res.status).toBe(200);
+      const body = (await (res as any).json()) as any;
+      expect(body.cap_usd).toBeNull();
+    });
+
+    test("returns 400 for negative", async () => {
+      const res = await api.handleSetCap("feat/open", makeReq("PATCH", { capUsd: -1 }));
+      expect(res.status).toBe(400);
+      const body = (await (res as any).json()) as any;
+      expect(body.code).toBe("BAD_REQUEST");
+    });
+
+    test("returns 400 for non-number", async () => {
+      const res = await api.handleSetCap("feat/open", makeReq("PATCH", { capUsd: "5" }));
+      expect(res.status).toBe(400);
+    });
+
+    test("returns 400 for non-JSON body", async () => {
+      const res = await api.handleSetCap("feat/open", new Request("http://x/", {
+        method: "PATCH",
+        body: "not json",
+      }));
+      expect(res.status).toBe(400);
+    });
+
+    test("returns 404 for missing feature", async () => {
+      const res = await api.handleSetCap("feat/nope", makeReq("PATCH", { capUsd: 5 }));
+      expect(res.status).toBe(404);
+    });
+
+    test("returns 409 for unassigned", async () => {
+      const res = await api.handleSetCap("unassigned", makeReq("PATCH", { capUsd: 5 }));
+      expect(res.status).toBe(409);
+      const body = (await (res as any).json()) as any;
+      expect(body.code).toBe("UNASSIGNED");
+    });
+  });
+
+  describe("POST /api/features/:id/tags", () => {
+    test("adds a tag and returns it plus the full list", async () => {
+      const res = await api.handleAddTag("feat/open", makeReq("POST", { tag: "shipped" }));
+      expect(res.status).toBe(200);
+      const body = (await (res as any).json()) as any;
+      expect(body.tag).toBe("shipped");
+      expect(body.tags).toContain("shipped");
+      expect(body.tags).toContain("backend");
+    });
+
+    test("normalises the tag (lowercase, trim)", async () => {
+      const res = await api.handleAddTag("feat/open", makeReq("POST", { tag: "  New:Tag  " }));
+      expect(res.status).toBe(200);
+      const body = (await (res as any).json()) as any;
+      expect(body.tag).toBe("new:tag");
+    });
+
+    test("returns 400 for non-string tag", async () => {
+      const res = await api.handleAddTag("feat/open", makeReq("POST", { tag: 5 }));
+      expect(res.status).toBe(400);
+    });
+
+    test("returns 400 for empty / whitespace tag", async () => {
+      const res = await api.handleAddTag("feat/open", makeReq("POST", { tag: "   " }));
+      expect(res.status).toBe(400);
+    });
+
+    test("returns 404 for missing feature", async () => {
+      const res = await api.handleAddTag("feat/nope", makeReq("POST", { tag: "x" }));
+      expect(res.status).toBe(404);
+    });
+
+    test("returns 409 for unassigned", async () => {
+      const res = await api.handleAddTag("unassigned", makeReq("POST", { tag: "x" }));
+      expect(res.status).toBe(409);
+    });
+  });
+
+  describe("DELETE /api/features/:id/tags/:tag", () => {
+    test("removes an existing tag", async () => {
+      const res = await api.handleRemoveTag("feat/open", "backend");
+      expect(res.status).toBe(200);
+      const body = (await (res as any).json()) as any;
+      expect(body.tags).not.toContain("backend");
+    });
+
+    test("normalises the tag (case-insensitive match)", async () => {
+      // Re-add backend first.
+      db.getDb().prepare(`INSERT OR IGNORE INTO tags (feature_id, tag) VALUES (?, ?)`)
+        .run("feat/open", "backend");
+      const res = await api.handleRemoveTag("feat/open", "  BACKEND  ");
+      expect(res.status).toBe(200);
+      const body = (await (res as any).json()) as any;
+      expect(body.tags).not.toContain("backend");
+    });
+
+    test("returns 404 for missing feature", async () => {
+      const res = await api.handleRemoveTag("feat/nope", "x");
+      expect(res.status).toBe(404);
+    });
+
+    test("returns 409 for unassigned", async () => {
+      const res = await api.handleRemoveTag("unassigned", "x");
+      expect(res.status).toBe(409);
+    });
+  });
+
+  describe("POST /api/features/:id/notes", () => {
+    test("appends a note and returns the new row", async () => {
+      const res = await api.handleAttachNote("feat/open", makeReq("POST", { body: "from dashboard" }));
+      expect(res.status).toBe(200);
+      const body = (await (res as any).json()) as any;
+      expect(body.id).toBeGreaterThan(0);
+      expect(body.body).toBe("from dashboard");
+      expect(body.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    });
+
+    test("returns 400 for empty body", async () => {
+      const res = await api.handleAttachNote("feat/open", makeReq("POST", { body: "" }));
+      expect(res.status).toBe(400);
+    });
+
+    test("returns 400 for whitespace body", async () => {
+      const res = await api.handleAttachNote("feat/open", makeReq("POST", { body: "   \n  " }));
+      expect(res.status).toBe(400);
+    });
+
+    test("returns 400 for non-string body", async () => {
+      const res = await api.handleAttachNote("feat/open", makeReq("POST", { body: 42 }));
+      expect(res.status).toBe(400);
+    });
+
+    test("returns 404 for missing feature", async () => {
+      const res = await api.handleAttachNote("feat/nope", makeReq("POST", { body: "x" }));
+      expect(res.status).toBe(404);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Cleanup
 // ---------------------------------------------------------------------------
 

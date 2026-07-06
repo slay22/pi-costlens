@@ -1,18 +1,36 @@
 {
-  "name": "costlens",
+  "name": "pi-costlens",
   "version": "0.6.0",
-  "description": "A pi extension that books the real dollar cost of every assistant message to a feature (git branch), with a local dashboard.",
+  "description": "A pi extension that books the real dollar cost of every assistant message to a feature (git branch), with a local web dashboard, native OS notifications, and a search/note/tag/merge lifecycle.",
   "type": "module",
   "license": "MIT",
-  "private": true,
+  "author": "Leo Gutierrez <slay22@users.noreply.github.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/slay22/pi-costlens.git"
+  },
+  "bugs": {
+    "url": "https://github.com/slay22/pi-costlens/issues"
+  },
+  "homepage": "https://github.com/slay22/pi-costlens#readme",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "extension",
+    "ai",
+    "cost-tracking",
+    "llm",
+    "developer-tools",
+    "dashboard"
+  ],
   "scripts": {
     "test": "node --import tsx --test test/extension.test.ts test/footer.test.ts test/lifecycle.test.ts test/notifications.test.ts",
     "test:watch": "node --import tsx --test --watch test/extension.test.ts test/footer.test.ts test/lifecycle.test.ts test/notifications.test.ts",
-    "test:server": "bun test test/server.test.ts",
+    "test:server": "bun test test/server.test.ts test/lifecycle-server.test.ts",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {
-    "@earendil-works/pi-coding-agent": "^0.80.3"
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
   },
   "devDependencies": {
     "@types/node": "^22.7.0",
@@ -24,5 +42,11 @@
     "extensions": [
       "./extension/index.ts"
     ]
-  }
+  },
+  "files": [
+    "extension",
+    "server",
+    "README.md",
+    "LICENSE"
+  ]
 }

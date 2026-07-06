@@ -27,6 +27,14 @@ import {
   handleAllTags,
   handleExportCsv,
   handleExportJson,
+  handleClose,
+  handleCancel,
+  handleMerge,
+  handleReopen,
+  handleSetCap,
+  handleAddTag,
+  handleRemoveTag,
+  handleAttachNote,
   type RouteContext,
 } from "./api.js";
 import { getCostlensHome, readConfig } from "./config.js";
@@ -84,6 +92,13 @@ function serveStatic(path: string): Response {
   });
 }
 
+function methodNotAllowed(allow: string): Response {
+  return new Response("Method not allowed", {
+    status: 405,
+    headers: { allow },
+  });
+}
+
 async function tryServeStatic(path: string): Promise<Response | null> {
   const file = Bun.file(path);
   if (!(await file.exists())) return null;
@@ -111,14 +126,53 @@ const server = Bun.serve({
       if (path === "/api/export.json") return handleExportJson();
       if (path === "/api/export.csv") return handleExportCsv();
 
-      const featureMatch = path.match(/^\/api\/features\/([^/]+)(?:\/(messages|tags|notes))?$/);
-      if (featureMatch) {
-        const id = decodeURIComponent(featureMatch[1]);
-        const sub = featureMatch[2];
-        if (sub === "messages") return handleMessages(id, url);
-        if (sub === "tags") return handleFeatureTags(id);
-        if (sub === "notes") return handleFeatureNotes(id);
-        return handleFeature(id);
+      // /api/features/<id>... — feature id can contain slashes (e.g.
+      // "feat/open"). Strip the prefix and dispatch on whatever is
+      // left: a known sub-resource, an action, a tag-delete tail, or
+      // the bare id.
+      if (path.startsWith("/api/features/")) {
+        const rest = path.slice("/api/features/".length);
+        const method = req.method;
+
+        // DELETE /api/features/<id>/tags/<tag> (tag never has slashes
+        // because it's normalised — lowercase, single token).
+        const tagDel = rest.match(/^(.+)\/tags\/([^/]+)$/);
+        if (tagDel) {
+          const id = decodeURIComponent(tagDel[1]);
+          const tag = decodeURIComponent(tagDel[2]);
+          if (method === "DELETE") return handleRemoveTag(id, tag);
+          return methodNotAllowed("DELETE");
+        }
+
+        // <id>/<action-or-subresource> (POST/PATCH/GET).
+        const action = rest.match(/^(.+)\/(messages|tags|notes|close|cancel|merge|reopen|cap)$/);
+        if (action) {
+          const id = decodeURIComponent(action[1]);
+          const sub = action[2];
+          // Status transitions (POST).
+          if (sub === "close") return method === "POST" ? handleClose(id, req) : methodNotAllowed("POST");
+          if (sub === "cancel") return method === "POST" ? handleCancel(id, req) : methodNotAllowed("POST");
+          if (sub === "merge") return method === "POST" ? handleMerge(id, req) : methodNotAllowed("POST");
+          if (sub === "reopen") return method === "POST" ? handleReopen(id) : methodNotAllowed("POST");
+          // Cap (PATCH).
+          if (sub === "cap") return method === "PATCH" ? handleSetCap(id, req) : methodNotAllowed("PATCH");
+          // Read sub-resources (GET).
+          if (sub === "messages") return method === "GET" ? handleMessages(id, url) : methodNotAllowed("GET");
+          if (sub === "tags") {
+            if (method === "GET") return handleFeatureTags(id);
+            if (method === "POST") return handleAddTag(id, req);
+            return methodNotAllowed("GET, POST");
+          }
+          if (sub === "notes") {
+            if (method === "GET") return handleFeatureNotes(id);
+            if (method === "POST") return handleAttachNote(id, req);
+            return methodNotAllowed("GET, POST");
+          }
+        }
+
+        // Top-level feature (GET only).
+        if (method === "GET") return handleFeature(decodeURIComponent(rest));
+        return methodNotAllowed("GET");
       }
 
       // Page routes
