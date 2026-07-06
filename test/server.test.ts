@@ -358,10 +358,119 @@ describe("db + api", () => {
   });
 
   test("handleFeatures returns the full list", async () => {
-    const res = api.handleFeatures();
+    const res = api.handleFeatures(new URL("http://x/api/features"));
     expect(res.status).toBe(200);
     const body = (await (res as any).json()) as any[];
     expect(body.length).toBe(3);
+  });
+
+  test("handleFeatures?q= filters by id/name substring (case-insensitive)", async () => {
+    const res = api.handleFeatures(new URL("http://x/api/features?q=OPEN"));
+    const body = (await (res as any).json()) as any[];
+    expect(body.length).toBe(1);
+    expect(body[0].id).toBe("feat/open");
+  });
+
+  test("handleFeatures?q= matches by name fragment", async () => {
+    const res = api.handleFeatures(new URL("http://x/api/features?q=done"));
+    const body = (await (res as any).json()) as any[];
+    expect(body.length).toBe(1);
+    expect(body[0].id).toBe("feat/done");
+  });
+
+  test("handleFeatures?q= returns empty for no match", async () => {
+    const res = api.handleFeatures(new URL("http://x/api/features?q=zzz"));
+    const body = (await (res as any).json()) as any[];
+    expect(body.length).toBe(0);
+  });
+
+  test("getAllTags returns unique tags with counts", () => {
+    const tags = db.getAllTags();
+    expect(tags.length).toBe(2);
+    expect(tags[0]).toEqual({ tag: "backend", count: 1 });
+    expect(tags[1]).toEqual({ tag: "v1", count: 1 });
+  });
+
+  test("handleAllTags returns the same shape", async () => {
+    const res = api.handleAllTags();
+    expect(res.status).toBe(200);
+    const body = (await (res as any).json()) as any[];
+    expect(body.length).toBe(2);
+  });
+
+  test("handleFeatureTags returns the tags array", async () => {
+    const res = api.handleFeatureTags("feat/open");
+    expect(res.status).toBe(200);
+    const body = (await (res as any).json()) as any[];
+    expect(body).toEqual(["backend", "v1"]);
+  });
+
+  test("handleFeatureTags 404s for missing feature", async () => {
+    const res = api.handleFeatureTags("nope");
+    expect(res.status).toBe(404);
+  });
+
+  test("handleFeatureNotes returns the notes array", async () => {
+    const res = api.handleFeatureNotes("feat/open");
+    expect(res.status).toBe(200);
+    const body = (await (res as any).json()) as any[];
+    expect(body.length).toBe(2);
+    expect(body[0].body).toBe("started work");
+  });
+
+  test("handleFeatureNotes 404s for missing feature", async () => {
+    const res = api.handleFeatureNotes("nope");
+    expect(res.status).toBe(404);
+  });
+
+  test("handleExportJson returns full ledger with all tables", async () => {
+    const res = api.handleExportJson();
+    expect(res.status).toBe(200);
+    const body = (await (res as any).json()) as any;
+    expect(typeof body.exportedAt).toBe("string");
+    expect(body.features.length).toBe(3);
+    expect(body.messages.length).toBe(3);
+    expect(body.notes.length).toBe(2);
+    expect(body.tags.length).toBe(2);
+    expect(body.sessions.length).toBe(0);
+  });
+
+  test("handleExportCsv returns text/csv with 5 sections", async () => {
+    const res = api.handleExportCsv();
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toMatch(/text\/csv/);
+    const body = await res.text();
+    // 5 section markers
+    expect(body.match(/^# /gm)?.length).toBe(5);
+    // Each section has a header line (column list)
+    expect(body).toContain("# features\nid,name,branch,status");
+    expect(body).toContain("# tags\nfeature_id,tag");
+    // One tag row appears
+    expect(body).toContain("feat/open,backend");
+  });
+
+  test("searchFeatures in db returns substring matches", () => {
+    expect(db.searchFeatures("OPEN").map((f) => f.id)).toEqual(["feat/open"]);
+    expect(db.searchFeatures("done").map((f) => f.id)).toEqual(["feat/done"]);
+    expect(db.searchFeatures("").length).toBe(0);
+  });
+
+  test("exportLedger includes tags per feature", () => {
+    const data = db.exportLedger();
+    expect(data.tags.length).toBe(2);
+    expect(data.tags[0]).toEqual({ feature_id: "feat/open", tag: "backend" });
+  });
+
+  test("exportLedgerCsv produces parseable sections", () => {
+    const csv = db.exportLedgerCsv();
+    expect(csv).toContain("# features");
+    expect(csv).toContain("# messages");
+    expect(csv).toContain("# notes");
+    expect(csv).toContain("# tags");
+    expect(csv).toContain("# sessions");
+    // Last section's header line should be present, with or without
+    // trailing newline (depending on whether there are session rows).
+    expect(csv).toMatch(/# sessions\nid,feature_id,cwd,started_at,last_seen($|\n)/);
   });
 
   test("handleFeature returns 404 for missing", async () => {

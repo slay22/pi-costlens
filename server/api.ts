@@ -14,6 +14,10 @@ import {
   getRecentModels,
   getTags,
   getMessages,
+  getAllTags,
+  searchFeatures,
+  exportLedger,
+  exportLedgerCsv,
 } from "./db.js";
 
 const JSON_HEADERS = { "content-type": "application/json" };
@@ -64,9 +68,60 @@ export function handleOverview(): Response {
   }
 }
 
-export function handleFeatures(): Response {
+export function handleFeatures(url: URL): Response {
   try {
+    const q = url.searchParams.get("q");
+    if (q && q.trim()) {
+      return json(searchFeatures(q));
+    }
     return json(getAllFeatures());
+  } catch (err) {
+    return serverError(err);
+  }
+}
+
+export function handleAllTags(): Response {
+  try {
+    return json(getAllTags());
+  } catch (err) {
+    return serverError(err);
+  }
+}
+
+export function handleFeatureTags(id: string): Response {
+  try {
+    if (!getFeature(id)) return notFound(`No feature "${id}".`);
+    return json(getTags(id));
+  } catch (err) {
+    return serverError(err);
+  }
+}
+
+export function handleFeatureNotes(id: string): Response {
+  try {
+    if (!getFeature(id)) return notFound(`No feature "${id}".`);
+    return json(getNotes(id));
+  } catch (err) {
+    return serverError(err);
+  }
+}
+
+export function handleExportJson(): Response {
+  try {
+    return json(exportLedger());
+  } catch (err) {
+    return serverError(err);
+  }
+}
+
+export function handleExportCsv(): Response {
+  try {
+    return new Response(exportLedgerCsv(), {
+      headers: {
+        "content-type": "text/csv; charset=utf-8",
+        "content-disposition": 'attachment; filename="costlens-export.csv"',
+      },
+    });
   } catch (err) {
     return serverError(err);
   }

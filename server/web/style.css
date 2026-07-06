@@ -122,6 +122,48 @@ main {
   letter-spacing: 0.05em;
 }
 
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.card-head h2 {
+  margin: 0;
+}
+
+/* search box in the overview card head */
+.search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#search {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font: inherit;
+  width: 240px;
+  max-width: 60vw;
+}
+
+#search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.search-count {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
 button {
   background: var(--surface-2);
   color: var(--text);
@@ -291,6 +333,56 @@ ul#notes-list li time {
   margin-top: 4px;
 }
 
+/* tag pills — neutral by default, colour hints by namespace */
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+button.tag {
+  cursor: pointer;
+  font-family: inherit;
+}
+
+button.tag:hover {
+  background: var(--border);
+}
+
+.tag .tag-count {
+  margin-left: 6px;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.tag-client   { color: #c4a3ff; border-color: rgba(196, 163, 255, 0.35); background: rgba(196, 163, 255, 0.10); }
+.tag-project  { color: #7cb7ff; border-color: rgba(124, 183, 255, 0.35); background: rgba(124, 183, 255, 0.10); }
+.tag-type     { color: #5dd39e; border-color: rgba(93, 211, 158, 0.35); background: rgba(93, 211, 158, 0.10); }
+.tag-env      { color: #ffd166; border-color: rgba(255, 209, 102, 0.35); background: rgba(255, 209, 102, 0.10); }
+.tag-team     { color: #f5b454; border-color: rgba(245, 180, 84, 0.35);  background: rgba(245, 180, 84, 0.10); }
+.tag-area     { color: #ff8fb3; border-color: rgba(255, 143, 179, 0.35); background: rgba(255, 143, 179, 0.10); }
+
+@media (prefers-color-scheme: light) {
+  .tag-client   { color: #6f42c1; background: rgba(111, 66, 193, 0.08); }
+  .tag-project  { color: #0366d6; background: rgba(3, 102, 214, 0.08); }
+  .tag-type     { color: #22863a; background: rgba(34, 134, 58, 0.08); }
+  .tag-env      { color: #b58900; background: rgba(181, 137, 0, 0.10); }
+  .tag-team     { color: #b08800; background: rgba(176, 136, 0, 0.10); }
+  .tag-area     { color: #d73a49; background: rgba(215, 58, 73, 0.08); }
+}
+
 /* uPlot chart container */
 .chart {
   width: 100%;
@@ -327,6 +419,9 @@ footer {
   padding: 24px;
 }
 
+/* tags list section spacing */
+#tags-card .tag-list { margin-top: 4px; }
+
 footer code {
   background: var(--surface-2);
   padding: 2px 6px;
@@ -343,4 +438,6 @@ a { color: var(--link); }
   main { padding: 16px; }
   .card { padding: 12px 14px; }
   .stat .value { font-size: 18px; }
+  #search { width: 100%; }
+  .card-head { flex-direction: column; align-items: stretch; }
 }

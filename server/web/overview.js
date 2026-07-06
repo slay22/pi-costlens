@@ -216,17 +216,10 @@ function render(o) {
     $("#current-feature").textContent = "(none)";
   }
 
-  // Top features table
-  $("#top-features tbody").innerHTML = o.topFeatures.length === 0
-    ? `<tr><td colspan="4" class="muted">No features yet</td></tr>`
-    : o.topFeatures.map(f => `
-      <tr>
-        <td><a href="/feature/${encodeURIComponent(f.id)}">${escape(f.name)}</a></td>
-        <td><span class="badge ${f.status}">${f.status}</span></td>
-        <td class="num">${fmtInt(f.turns)}</td>
-        <td class="num">${fmt(f.cost)}</td>
-      </tr>
-    `).join("");
+  // Top features table — keep the full list as a JS cache so the
+  // search box can filter client-side without re-fetching.
+  lastFeatures = o.topFeatures || [];
+  applyFilter();
 
   // byDay: fill in any missing 0-days (defensive — server does this too)
   const byDay = o.byDay || [];
@@ -270,6 +263,52 @@ function render(o) {
   });
 }
 
+// Cache of the last-fetched top-features list. The search box filters
+// this in-place without hitting the server (the spec calls for a
+// client-side filter; the server-side /api/features?q= endpoint is
+// available for future use, e.g. linking from outside).
+let lastFeatures = [];
+
+function applyFilter() {
+  const q = ($("#search").value || "").trim().toLowerCase();
+  const list = q
+    ? lastFeatures.filter(f =>
+        f.id.toLowerCase().includes(q) ||
+        f.name.toLowerCase().includes(q))
+    : lastFeatures;
+  $("#top-features tbody").innerHTML = list.length === 0
+    ? `<tr><td colspan="5" class="muted">${q ? `No features match "${escape(q)}"` : "No features yet"}</td></tr>`
+    : list.map(f => `
+      <tr>
+        <td><a href="/feature/${encodeURIComponent(f.id)}">${escape(f.name)}</a></td>
+        <td><span class="badge ${f.status}">${f.status}</span></td>
+        <td>${renderTags(f.tags || [])}</td>
+        <td class="num">${fmtInt(f.turns)}</td>
+        <td class="num">${fmt(f.cost)}</td>
+      </tr>
+    `).join("");
+  const count = $("#search-count");
+  if (count) {
+    count.textContent = q
+      ? `${list.length} / ${lastFeatures.length}`
+      : "";
+  }
+}
+
+function renderTags(tags) {
+  if (!tags || tags.length === 0) return `<span class="muted">—</span>`;
+  return tags.map(t => `<span class="tag ${tagClass(t)}">${escape(t)}</span>`).join(" ");
+}
+
+/** Map a tag like "client:acme" to a CSS class for colour hints. */
+function tagClass(tag) {
+  const prefix = tag.split(/[:.]/)[0].toLowerCase();
+  if (["client", "project", "type", "env", "team", "area"].includes(prefix)) {
+    return `tag-${prefix}`;
+  }
+  return "";
+}
+
 function escape(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -277,4 +316,5 @@ function escape(s) {
 }
 
 $("#refresh").addEventListener("click", load);
+$("#search").addEventListener("input", applyFilter);
 load();

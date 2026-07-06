@@ -8,13 +8,22 @@
  *   - Notes attached at close/cancel or standalone
  *   - List / get for UI
  *
+ * Phase 5 adds:
+ *   - merge (third "ended" state: branch merged, work may continue)
+ *   - tags (free-form, lowercased on save)
+ *   - notes (standalone `attachNote` was already there; add a listAll
+ *     helper and a listNotes alias)
+ *   - search (case-insensitive substring on id/name)
+ *   - export (JSON dump of all tables; CSV with one section per table)
+ *
  * Decisions baked in:
  *   - On session_start, a feature is resumed (no prompt) only if its
  *     status is "open". Closed/cancelled features stay closed; a new
  *     session on the same branch goes to "unassigned" unless the user
  *     explicitly reopens with `/feature reopen`.
  *   - The "unassigned" feature is the bucket for main / detached / no-git
- *     and for branches whose feature is closed. It is never closed.
+ *     and for branches whose feature is closed. It is never closed, and
+ *     it refuses tags (no identity worth categorising).
  */
 
 import type { DatabaseSync } from "node:sqlite";
@@ -210,6 +219,33 @@ export function cancelFeature(featureId: string, note?: string): Feature {
   return getFeature(featureId)!;
 }
 
+/**
+ * Mark a feature as `merged` — the branch was merged but feature work
+ * may continue. Freezes cost (closed_at is set) but the status is
+ * semantically distinct from `done` (work completed) and `abandoned`
+ * (work dropped). Reopen via `/feature reopen` works the same as for
+ * done/abandoned.
+ */
+export function mergeFeature(featureId: string, note?: string): Feature {
+  if (featureId === UNASSIGNED_ID) {
+    throw new LifecycleError("UNASSIGNED", "Cannot merge the unassigned pool.");
+  }
+  const f = getFeature(featureId);
+  if (!f) throw new LifecycleError("NOT_FOUND", `No feature "${featureId}".`);
+  if (f.status !== "open") {
+    throw new LifecycleError(
+      "INVALID_STATE",
+      `Feature "${featureId}" is already ${f.status}; reopen it first if you want to merge again.`
+    );
+  }
+  const now = new Date().toISOString();
+  const db = getDb();
+  db.prepare(`UPDATE features SET status = 'merged', closed_at = ? WHERE id = ?`)
+    .run(now, featureId);
+  if (note && note.trim()) attachNote(featureId, note.trim());
+  return getFeature(featureId)!;
+}
+
 export function reopenFeature(featureId: string): Feature {
   if (featureId === UNASSIGNED_ID) {
     throw new LifecycleError("UNASSIGNED", "Cannot reopen the unassigned pool.");
@@ -269,6 +305,202 @@ export function getNotes(featureId: string): Array<{ id: number; body: string; c
   return getDb()
     .prepare(`SELECT id, body, created_at FROM notes WHERE feature_id = ? ORDER BY created_at ASC`)
     .all(featureId) as Array<{ id: number; body: string; created_at: string }>;
+}
+
+export function listNotes(featureId: string): Array<{ id: number; body: string; created_at: string }> {
+  return getNotes(featureId);
+}
+
+// ---------------------------------------------------------------------------
+// Tags (Phase 5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Add a tag to a feature. Tags are lowercased + trimmed on save. Adding
+ * the same tag twice is a no-op (PK is `(feature_id, tag)`). The
+ * unassigned pool refuses tags — it has no identity worth categorising.
+ */
+export function addTag(featureId: string, rawTag: string): string {
+  if (featureId === UNASSIGNED_ID) {
+    throw new LifecycleError("UNASSIGNED", "Cannot tag the unassigned pool.");
+  }
+  const tag = normaliseTag(rawTag);
+  if (!tag) {
+    throw new LifecycleError("INVALID_STATE", "Tag cannot be empty.");
+  }
+  const f = getFeature(featureId);
+  if (!f) throw new LifecycleError("NOT_FOUND", `No feature "${featureId}".`);
+  getDb()
+    .prepare(`INSERT OR IGNORE INTO tags (feature_id, tag) VALUES (?, ?)`)
+    .run(featureId, tag);
+  return tag;
+}
+
+/** Remove a tag from a feature. No-op if the tag isn't set. */
+export function removeTag(featureId: string, rawTag: string): boolean {
+  if (featureId === UNASSIGNED_ID) {
+    throw new LifecycleError("UNASSIGNED", "Cannot untag the unassigned pool.");
+  }
+  const tag = normaliseTag(rawTag);
+  if (!tag) return false;
+  const res = getDb()
+    .prepare(`DELETE FROM tags WHERE feature_id = ? AND tag = ?`)
+    .run(featureId, tag);
+  return res.changes > 0;
+}
+
+/** Sorted list of tags for a single feature. */
+export function listTags(featureId: string): string[] {
+  return (
+    getDb()
+      .prepare(`SELECT tag FROM tags WHERE feature_id = ? ORDER BY tag`)
+      .all(featureId) as Array<{ tag: string }>
+  ).map((r) => r.tag);
+}
+
+/**
+ * All unique tags across the ledger, sorted, with the count of features
+ * carrying each tag. Useful for the "what tags exist" overview.
+ */
+export function listAllTags(): Array<{ tag: string; count: number }> {
+  return getDb()
+    .prepare(
+      `SELECT tag, COUNT(*) AS count
+       FROM tags
+       GROUP BY tag
+       ORDER BY tag`
+    )
+    .all() as Array<{ tag: string; count: number }>;
+}
+
+/** Lowercase + trim + collapse internal whitespace. */
+function normaliseTag(rawTag: string): string {
+  return rawTag.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+// ---------------------------------------------------------------------------
+// Search (Phase 5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Case-insensitive substring match on `id` and `name`. Uses `instr()` so
+ * user input isn't interpreted as a LIKE pattern (no wildcards). The
+ * unassigned pool is included.
+ */
+export function searchFeatures(query: string): Feature[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  return getDb()
+    .prepare(
+      `SELECT * FROM features
+       WHERE instr(LOWER(id), ?) > 0
+          OR instr(LOWER(name), ?) > 0
+       ORDER BY COALESCE(last_activity_at, started_at) DESC`
+    )
+    .all(q, q) as Feature[];
+}
+
+// ---------------------------------------------------------------------------
+// Export (Phase 5)
+// ---------------------------------------------------------------------------
+
+export type LedgerExport = {
+  exportedAt: string;
+  features: Feature[];
+  messages: Array<Record<string, unknown>>;
+  notes: Array<{ id: number; feature_id: string; body: string; created_at: string }>;
+  tags: Array<{ feature_id: string; tag: string }>;
+  sessions: Array<{ id: string; feature_id: string; cwd: string; started_at: string; last_seen: string }>;
+};
+
+export function exportLedger(): LedgerExport {
+  const db = getDb();
+  return {
+    exportedAt: new Date().toISOString(),
+    features: db
+      .prepare(`SELECT * FROM features ORDER BY id`)
+      .all() as Feature[],
+    messages: db
+      .prepare(
+        `SELECT id, feature_id, session_id, model, provider,
+                input_tokens, output_tokens, cache_read, cache_write,
+                cost_usd, cost_input, cost_output, cost_cache_read, cost_cache_write,
+                cost_unknown, timestamp, branch_path
+         FROM messages ORDER BY feature_id, timestamp`
+      )
+      .all() as Array<Record<string, unknown>>,
+    notes: db
+      .prepare(`SELECT id, feature_id, body, created_at FROM notes ORDER BY id`)
+      .all() as Array<{ id: number; feature_id: string; body: string; created_at: string }>,
+    tags: db
+      .prepare(`SELECT feature_id, tag FROM tags ORDER BY feature_id, tag`)
+      .all() as Array<{ feature_id: string; tag: string }>,
+    sessions: db
+      .prepare(
+        `SELECT id, feature_id, cwd, started_at, last_seen FROM sessions ORDER BY id`
+      )
+      .all() as Array<{ id: string; feature_id: string; cwd: string; started_at: string; last_seen: string }>,
+  };
+}
+
+/**
+ * Render the ledger as CSV. One section per table, separated by blank
+ * lines, with a single comment line naming the table (e.g. `# features`).
+ * Most CSV tools either ignore `#` lines or accept them as a row; for
+ * full pipe-friendly output we keep the structure simple.
+ */
+export function exportLedgerCsv(): string {
+  const data = exportLedger();
+  const sections: string[] = [];
+  sections.push(
+    csvSection("features", [
+      "id", "name", "branch", "status", "cap_usd", "started_at", "closed_at",
+      "pricing_conf", "total_cost_usd", "total_input", "total_output",
+      "total_cache_read", "total_cache_write", "turn_count",
+      "first_activity_at", "last_activity_at",
+    ], data.features as unknown as Array<Record<string, unknown>>)
+  );
+  sections.push(
+    csvSection("messages", [
+      "id", "feature_id", "session_id", "model", "provider", "input_tokens",
+      "output_tokens", "cache_read", "cache_write", "cost_usd", "cost_input",
+      "cost_output", "cost_cache_read", "cost_cache_write", "cost_unknown",
+      "timestamp", "branch_path",
+    ], data.messages)
+  );
+  sections.push(
+    csvSection("notes", ["id", "feature_id", "body", "created_at"], data.notes)
+  );
+  sections.push(
+    csvSection("tags", ["feature_id", "tag"], data.tags)
+  );
+  sections.push(
+    csvSection("sessions", ["id", "feature_id", "cwd", "started_at", "last_seen"], data.sessions)
+  );
+  return sections.join("\n");
+}
+
+function csvSection(
+  name: string,
+  columns: string[],
+  rows: Array<Record<string, unknown>>
+): string {
+  const lines: string[] = [`# ${name}`, columns.join(",")];
+  for (const r of rows) {
+    lines.push(columns.map((c) => csvCell(r[c])).join(","));
+  }
+  return lines.join("\n");
+}
+
+function csvCell(v: unknown): string {
+  if (v == null) return "";
+  const s = String(v);
+  // Quote if the value contains a comma, quote, or newline. Escape
+  // embedded quotes by doubling them (RFC 4180).
+  if (/[",\n\r]/.test(s)) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
 }
 
 export function listFeatures(filter?: { status?: Feature["status"] }): Feature[] {
