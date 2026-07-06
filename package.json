@@ -1,6 +1,6 @@
 {
   "name": "costlens",
-  "version": "0.1.0",
+  "version": "0.6.0",
   "description": "A pi extension that books the real dollar cost of every assistant message to a feature (git branch), with a local dashboard.",
   "type": "module",
   "license": "MIT",
