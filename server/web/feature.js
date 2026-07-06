@@ -134,11 +134,14 @@ let lastMessages = null;
 
 async function load() {
   setConn("loading", "…");
-  let feature, messages;
+  let feature, messages, subagents, subagentRuns, tools;
   try {
-    const [fr, mr] = await Promise.all([
+    const [fr, mr, sa, srn, tl] = await Promise.all([
       fetch(`/api/features/${encodeURIComponent(featureId)}`),
       fetch(`/api/features/${encodeURIComponent(featureId)}/messages?limit=500`),
+      fetch(`/api/features/${encodeURIComponent(featureId)}/subagents`),
+      fetch(`/api/features/${encodeURIComponent(featureId)}/subagent-runs`),
+      fetch(`/api/features/${encodeURIComponent(featureId)}/tools`),
     ]);
     if (fr.status === 404) {
       setConn("error", "404");
@@ -149,6 +152,11 @@ async function load() {
     if (!mr.ok) throw new Error(`messages: HTTP ${mr.status}`);
     feature = await fr.json();
     messages = await mr.json();
+    // Sub-agent / tool endpoints: tolerate 404 (older servers may
+    // not have them). Treat any failure as "empty".
+    subagents = sa.ok ? await sa.json() : [];
+    subagentRuns = srn.ok ? await srn.json() : [];
+    tools = tl.ok ? await tl.json() : [];
   } catch (err) {
     setConn("error", "offline");
     showError(`Failed to load feature: ${escape(err.message)}. ` +
@@ -158,7 +166,7 @@ async function load() {
   setConn("ok", "ok");
   lastFeature = feature;
   lastMessages = messages;
-  render(feature, messages);
+  render(feature, messages, subagents, subagentRuns, tools);
 }
 
 function setConn(level, text) {
@@ -192,7 +200,7 @@ function capClass(cost, cap) {
   return "ok";
 }
 
-function render(f, msgs) {
+function render(f, msgs, subagents, subagentRuns, tools) {
   clearError();
   document.title = `Costlens · ${f.name}`;
   $("#feature-name").textContent = f.name;
@@ -200,8 +208,12 @@ function render(f, msgs) {
   badge.textContent = f.status;
   badge.className = `badge ${f.status}`;
 
-  $("#stat-cost").textContent = fmt(f.total_cost_usd);
-  $("#stat-cost").className = `value ${capClass(f.total_cost_usd, f.cap_usd)}`;
+  // Phase 7: total = parent + sub-agent cost. The cap is against the
+  // combined total (matches the "actual spend" intuition).
+  const subCost = Number(f.subagent_cost_usd ?? 0);
+  const totalCost = Number(f.total_cost_usd) + subCost;
+  $("#stat-cost").textContent = fmt(totalCost);
+  $("#stat-cost").className = `value ${capClass(totalCost, f.cap_usd)}`;
   $("#stat-cap").textContent = f.cap_usd ? `$${f.cap_usd.toFixed(2)}` : "—";
   $("#stat-turns").textContent = fmtInt(f.turn_count);
   $("#stat-pricing").textContent = f.pricing_conf;
@@ -241,6 +253,12 @@ function render(f, msgs) {
     notesCard.hidden = true;
   }
 
+  // Sub-agents card (Phase 7)
+  renderSubagents(subagents || [], subagentRuns || []);
+
+  // Tool usage card (Phase 7)
+  renderTools(tools || []);
+
   // Recent messages (most recent first)
   const tbody = $("#timeline tbody");
   const reversed = msgs.slice().reverse();
@@ -260,6 +278,72 @@ function render(f, msgs) {
   requestAnimationFrame(() => {
     renderTimelineChart($("#timeline-chart"), msgs, f.cap_usd);
   });
+}
+
+function renderSubagents(summary, runs) {
+  const card = $("#subagents-card");
+  if (!summary || summary.length === 0) {
+    card.hidden = true;
+    return;
+  }
+  card.hidden = false;
+  const totalRuns = summary.reduce((s, a) => s + Number(a.runs || 0), 0);
+  const totalCost = summary.reduce((s, a) => s + Number(a.cost || 0), 0);
+  const totalTurns = summary.reduce((s, a) => s + Number(a.turns || 0), 0);
+  const totalIn = summary.reduce((s, a) => s + Number(a.input_tokens || 0), 0);
+  const totalOut = summary.reduce((s, a) => s + Number(a.output_tokens || 0), 0);
+
+  const tbody = $("#subagents-table tbody");
+  const tfoot = $("#subagents-table tfoot");
+  tbody.innerHTML = summary.map(a => {
+    const avg = a.runs > 0 ? a.cost / a.runs : 0;
+    return `<tr>
+      <td><span class="agent-chip">${escape(a.agent)}</span></td>
+      <td class="num">${fmtInt(a.runs)}</td>
+      <td class="num">${fmt(a.cost)}</td>
+      <td class="num">${fmt(avg)}</td>
+      <td class="num">${fmtInt(a.input_tokens)}</td>
+      <td class="num">${fmtInt(a.output_tokens)}</td>
+      <td class="num">${fmtInt(a.turns)}</td>
+    </tr>`;
+  }).join("");
+  tfoot.innerHTML = `<tr>
+    <th>total</th>
+    <th class="num">${fmtInt(totalRuns)}</th>
+    <th class="num">${fmt(totalCost)}</th>
+    <th class="num">—</th>
+    <th class="num">${fmtInt(totalIn)}</th>
+    <th class="num">${fmtInt(totalOut)}</th>
+    <th class="num">${fmtInt(totalTurns)}</th>
+  </tr>`;
+
+  // Per-run table: oldest first (chronological).
+  const rtbody = $("#subagent-runs tbody");
+  rtbody.innerHTML = (runs || []).length === 0
+    ? `<tr><td colspan="8" class="muted">No runs</td></tr>`
+    : (runs || []).map(r => `<tr>
+      <td>${escape(r.timestamp?.replace("T", " ").slice(0, 19) ?? "")}</td>
+      <td><span class="agent-chip">${escape(r.agent)}</span></td>
+      <td>${escape(r.model ?? "—")}</td>
+      <td class="num">${r.step ?? "—"}</td>
+      <td class="num">${fmtInt(r.input_tokens)}</td>
+      <td class="num">${fmtInt(r.output_tokens)}</td>
+      <td class="num">${fmt(r.cost_usd)}</td>
+      <td class="task-cell">${escape((r.task || "").slice(0, 80))}</td>
+    </tr>`).join("");
+}
+
+function renderTools(counts) {
+  const card = $("#tools-card");
+  if (!counts || counts.length === 0) {
+    card.hidden = true;
+    return;
+  }
+  card.hidden = false;
+  $("#tools-table tbody").innerHTML = counts.map(c => `<tr>
+    <td>${escape(c.tool_name)}</td>
+    <td class="num">${fmtInt(c.calls)}</td>
+  </tr>`).join("");
 }
 
 function escape(s) {

@@ -42,6 +42,7 @@ import {
   getNotes,
   exportLedger,
   exportLedgerCsv,
+  getSubagentSummary,
   LifecycleError,
   type Feature,
 } from "./lifecycle.js";
@@ -126,7 +127,7 @@ export function registerCommands(pi: ExtensionAPI, deps: CommandDeps): void {
 
 async function showHelp(ctx: ExtensionContext): Promise<void> {
   const text =
-    `Costlens — feature-based cost tracking (Phase 6)
+    `Costlens — feature-based cost tracking (Phase 7)
 
 View:
   /feature help                   This help
@@ -233,15 +234,29 @@ async function showStatus(ctx: ExtensionContext, deps: CommandDeps): Promise<voi
 
   const tags = listTags(featureId);
   const notes = getNotes(featureId);
+  const subagentSummary = getSubagentSummary(featureId);
 
   const lines: string[] = [];
   lines.push(`● ${feature.name}  (${feature.status})`);
   if (feature.branch) lines.push(`  branch: ${feature.branch}`);
+  // Phase 7: parent + agents cost breakdown. The cap is against the
+  // sum of the two (matches the "you've actually spent $X" intuition).
   const capLine = feature.cap_usd
     ? ` / $${feature.cap_usd.toFixed(2)} cap`
     : "";
-  lines.push(`  cost:    $${feature.total_cost_usd.toFixed(4)}${capLine}`);
-  const warn = capWarning(feature);
+  const parentCost = feature.total_cost_usd;
+  const agentCost = feature.subagent_cost_usd;
+  const totalCost = parentCost + agentCost;
+  if (agentCost > 0) {
+    lines.push(`  cost:    $${totalCost.toFixed(4)}${capLine}`);
+    lines.push(
+      `    parent: $${parentCost.toFixed(4)}  (${feature.turn_count} turns)`
+    );
+    lines.push(`    agents: $${agentCost.toFixed(4)}  (${subagentSummary.length} agent types)`);
+  } else {
+    lines.push(`  cost:    $${parentCost.toFixed(4)}${capLine}`);
+  }
+  const warn = capWarning({ ...feature, total_cost_usd: totalCost });
   if (warn) lines.push(warn);
   lines.push(
     `  tokens:  in ${feature.total_input} · out ${feature.total_output}` +
@@ -269,6 +284,16 @@ async function showStatus(ctx: ExtensionContext, deps: CommandDeps): Promise<voi
       lines.push(
         `    ${m.model.padEnd(28)} ${String(m.turns).padStart(3)}t  $${m.cost.toFixed(4)}` +
           `  in ${m.input_tokens} · out ${m.output_tokens}`
+      );
+    }
+  }
+  if (subagentSummary.length > 0) {
+    lines.push(`  sub-agents:`);
+    for (const s of subagentSummary) {
+      const perRun = s.runs > 0 ? s.cost / s.runs : 0;
+      lines.push(
+        `    ${s.agent.padEnd(18)} ${String(s.runs).padStart(2)}\u00d7  $${s.cost.toFixed(4)}` +
+          `  (avg $${perRun.toFixed(4)}/run, in ${s.input_tokens} / out ${s.output_tokens} / ${s.turns} turns)`
       );
     }
   }

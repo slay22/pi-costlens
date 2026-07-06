@@ -80,6 +80,25 @@
       </details>
     </section>
 
+    <section class="card" id="top-subagents-card" hidden>
+      <h2>Top sub-agents</h2>
+      <p class="muted">Aggregate cost across all features for each sub-agent type (Explore, Plan, custom, …).</p>
+      <div class="table-wrap">
+        <table id="top-subagents">
+          <thead>
+            <tr>
+              <th>Agent</th>
+              <th class="num">Total runs</th>
+              <th class="num">Total cost</th>
+              <th class="num">Avg / run</th>
+              <th class="num">Turns</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
     <section class="card">
       <h2>Status breakdown</h2>
       <ul id="by-status" class="status-list"></ul>
@@ -87,7 +106,7 @@
   </main>
 
   <footer>
-    <span>Costlens v0.6.0 · dogfooded on <code id="current-feature">—</code></span>
+    <span>Costlens v0.7.0 · dogfooded on <code id="current-feature">—</code></span>
   </footer>
 
   <script src="/vendor/uplot.iife.min.js"></script>

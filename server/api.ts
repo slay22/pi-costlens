@@ -18,6 +18,10 @@ import {
   searchFeatures,
   exportLedger,
   exportLedgerCsv,
+  getSubagentRuns,
+  getSubagentSummary,
+  getToolCallCounts,
+  getTopSubagents,
 } from "./db.js";
 
 const JSON_HEADERS = { "content-type": "application/json" };
@@ -155,6 +159,50 @@ export function handleMessages(
       return badRequest("limit must be a positive number");
     }
     return json(getMessages(id, { since, limit }));
+  } catch (err) {
+    return serverError(err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 7: sub-agents + per-tool cost attribution
+// ---------------------------------------------------------------------------
+
+export function handleFeatureSubagents(id: string): Response {
+  try {
+    if (!getFeature(id)) return notFound(`No feature "${id}".`);
+    return json(getSubagentSummary(id));
+  } catch (err) {
+    return serverError(err);
+  }
+}
+
+export function handleFeatureSubagentRuns(id: string): Response {
+  try {
+    if (!getFeature(id)) return notFound(`No feature "${id}".`);
+    return json(getSubagentRuns(id));
+  } catch (err) {
+    return serverError(err);
+  }
+}
+
+export function handleFeatureTools(id: string): Response {
+  try {
+    if (!getFeature(id)) return notFound(`No feature "${id}".`);
+    return json(getToolCallCounts(id));
+  } catch (err) {
+    return serverError(err);
+  }
+}
+
+export function handleTopSubagents(url: URL): Response {
+  try {
+    const limitRaw = url.searchParams.get("limit");
+    const limit = limitRaw ? Number(limitRaw) : 10;
+    if (isNaN(limit) || limit <= 0) {
+      return badRequest("limit must be a positive number");
+    }
+    return json(getTopSubagents(limit));
   } catch (err) {
     return serverError(err);
   }

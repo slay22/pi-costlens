@@ -52,12 +52,12 @@ describe("DB schema", () => {
     assert.ok(names.includes("schema_version"), "schema_version table exists");
   });
 
-  test("schema version is 1", async () => {
+  test("schema version is 2", async () => {
     const { getDb } = await import("../extension/db.js");
     const row = getDb()
       .prepare(`SELECT MAX(version) AS v FROM schema_version`)
       .get() as { v: number };
-    assert.equal(row.v, 1);
+    assert.equal(row.v, 2);
   });
 });
 
@@ -617,6 +617,252 @@ describe("searchFeatures", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Sub-agent + per-tool cost attribution (Phase 7)
+// ---------------------------------------------------------------------------
+
+describe("sub-agent + tool-call recording", () => {
+  test("insertSubagentRun writes the row, updateFeatureSubagentCost recomputes the total", async () => {
+    const {
+      insertSubagentRun,
+      updateFeatureSubagentCost,
+      getSubagentRuns,
+      getFeature,
+    } = await import("../extension/lifecycle.js");
+    const f = await openFeature("subagent-1");
+    const inserted1 = insertSubagentRun(f.id, "tc-1", {
+      agent: "Explore",
+      agentSource: "user",
+      task: "find files",
+      exitCode: 0,
+      usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: 0.04, turns: 1 },
+    });
+    const inserted2 = insertSubagentRun(f.id, "tc-2", {
+      agent: "Plan",
+      agentSource: "user",
+      task: "draft a plan",
+      exitCode: 0,
+      usage: { input: 200, output: 100, cacheRead: 0, cacheWrite: 0, cost: 0.06, turns: 2 },
+    });
+    assert.equal(inserted1, true);
+    assert.equal(inserted2, true);
+
+    // Pre-update: the cached column hasn't been touched.
+    const before = getFeature(f.id);
+    assert.equal(before?.subagent_cost_usd, 0, "pre-update total is 0");
+
+    updateFeatureSubagentCost(f.id);
+    const after = getFeature(f.id);
+    assert.equal(after?.subagent_cost_usd, 0.10, "SUM(cost_usd) = 0.04 + 0.06");
+
+    const runs = getSubagentRuns(f.id);
+    assert.equal(runs.length, 2);
+    assert.deepEqual(
+      runs.map((r) => r.agent).sort(),
+      ["Explore", "Plan"]
+    );
+  });
+
+  test("insertSubagentRun is idempotent on (feature, parent_message_id, agent, step)", async () => {
+    const { insertSubagentRun, getSubagentRuns } = await import(
+      "../extension/lifecycle.js"
+    );
+    const f = await openFeature("subagent-2");
+    const row = {
+      agent: "Explore",
+      agentSource: "user" as const,
+      task: "idem",
+      exitCode: 0,
+      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0.01, turns: 1 },
+    };
+    const a = insertSubagentRun(f.id, "tc-1", row);
+    const b = insertSubagentRun(f.id, "tc-1", row);
+    const c = insertSubagentRun(f.id, "tc-1", { ...row, agent: "Plan" });
+    assert.equal(a, true);
+    assert.equal(b, false, "second insert is a no-op");
+    assert.equal(c, true, "different agent is a new row");
+    assert.equal(getSubagentRuns(f.id).length, 2);
+  });
+
+  test("getSubagentSummary aggregates per agent, ordered by cost desc", async () => {
+    const { insertSubagentRun, getSubagentSummary } = await import(
+      "../extension/lifecycle.js"
+    );
+    const f = await openFeature("subagent-3");
+    insertSubagentRun(f.id, "tc-1", {
+      agent: "Explore",
+      agentSource: "user",
+      task: "a",
+      exitCode: 0,
+      usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, cost: 0.05, turns: 1 },
+    });
+    insertSubagentRun(f.id, "tc-2", {
+      agent: "Explore",
+      agentSource: "user",
+      task: "b",
+      exitCode: 0,
+      usage: { input: 200, output: 100, cacheRead: 0, cacheWrite: 0, cost: 0.10, turns: 2 },
+    });
+    insertSubagentRun(f.id, "tc-3", {
+      agent: "Plan",
+      agentSource: "user",
+      task: "c",
+      exitCode: 0,
+      usage: { input: 50, output: 25, cacheRead: 0, cacheWrite: 0, cost: 0.01, turns: 1 },
+    });
+    const summary = getSubagentSummary(f.id);
+    assert.equal(summary.length, 2);
+    assert.equal(summary[0].agent, "Explore", "ordered by cost desc");
+    assert.equal(summary[0].runs, 2);
+    assert.ok(Math.abs(summary[0].cost - 0.15) < 1e-9, `cost ~0.15, got ${summary[0].cost}`);
+    assert.equal(summary[0].turns, 3, "sum of usage.turns");
+    assert.equal(summary[0].input_tokens, 300);
+    assert.equal(summary[1].agent, "Plan");
+    assert.equal(summary[1].runs, 1);
+  });
+
+  test("getTopSubagents rolls up across features (excluding unassigned)", async () => {
+    const { insertSubagentRun, getTopSubagents } = await import(
+      "../extension/lifecycle.js"
+    );
+    const a = await openFeature("subagent-4a");
+    const b = await openFeature("subagent-4b");
+    insertSubagentRun(a.id, "tc-1", {
+      agent: "Explore",
+      agentSource: "user",
+      task: "x",
+      exitCode: 0,
+      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0.10, turns: 1 },
+    });
+    insertSubagentRun(b.id, "tc-1", {
+      agent: "Explore",
+      agentSource: "user",
+      task: "y",
+      exitCode: 0,
+      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0.20, turns: 1 },
+    });
+    insertSubagentRun(b.id, "tc-2", {
+      agent: "Plan",
+      agentSource: "user",
+      task: "z",
+      exitCode: 0,
+      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0.05, turns: 1 },
+    });
+
+    const top = getTopSubagents(10);
+    assert.equal(top.length, 2);
+    assert.equal(top[0].agent, "Explore");
+    assert.equal(top[0].runs, 2);
+    assert.ok(Math.abs(top[0].cost - 0.30) < 1e-9, `cost ~0.30, got ${top[0].cost}`);
+    assert.equal(top[1].agent, "Plan");
+    assert.ok(Math.abs(top[1].cost - 0.05) < 1e-9, `cost ~0.05, got ${top[1].cost}`);
+  });
+
+  test("insertToolCall + getToolCallCounts work for analytics", async () => {
+    const { insertToolCall, getToolCalls, getToolCallCounts } = await import(
+      "../extension/lifecycle.js"
+    );
+    const f = await openFeature("tools-1");
+    insertToolCall(f.id, "m1", "Read", 100);
+    insertToolCall(f.id, "m2", "Read", 200);
+    insertToolCall(f.id, "m3", "Edit", 300);
+    insertToolCall(f.id, "m4", "Bash", 50);
+    insertToolCall(f.id, "m5", "Bash", 60);
+    const counts = getToolCallCounts(f.id);
+    const byName = Object.fromEntries(counts.map((c) => [c.tool_name, c.calls]));
+    assert.equal(byName["Read"], 2);
+    assert.equal(byName["Edit"], 1);
+    assert.equal(byName["Bash"], 2);
+    // Ordered by calls desc
+    assert.equal(counts[0].calls >= counts[1].calls, true);
+    assert.equal(getToolCalls(f.id).length, 5);
+  });
+
+  test("getTopSubagents respects limit and excludes unassigned", async () => {
+    const { insertSubagentRun, getTopSubagents } = await import(
+      "../extension/lifecycle.js"
+    );
+    // Three features, three different agents, one is unassigned.
+    const a = await openFeature("subagent-5a");
+    const b = await openFeature("subagent-5b");
+    insertSubagentRun(a.id, "tc", {
+      agent: "Explore", agentSource: "user", task: "x", exitCode: 0,
+      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0.10, turns: 1 },
+    });
+    insertSubagentRun(b.id, "tc", {
+      agent: "Plan", agentSource: "user", task: "y", exitCode: 0,
+      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0.05, turns: 1 },
+    });
+    // unassigned pool should be excluded.
+    const unassignedRow = (await import("../extension/lifecycle.js")).getFeature("unassigned");
+    if (unassignedRow) {
+      insertSubagentRun("unassigned", "tc", {
+        agent: "general-purpose", agentSource: "user", task: "z", exitCode: 0,
+        usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 99, turns: 1 },
+      });
+    }
+    const top = getTopSubagents(2);
+    assert.equal(top.length, 2, "limit 2");
+    assert.ok(!top.some((s) => s.agent === "general-purpose"), "unassigned pool excluded");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Migration: v1 -> v2 (subagent_cost_usd column added)
+// ---------------------------------------------------------------------------
+
+describe("schema migration v1 -> v2", () => {
+  test("adds subagent_cost_usd column on a v1 DB and idempotently on re-migrate", async () => {
+    const { DatabaseSync } = await import("node:sqlite");
+    const { join } = await import("node:path");
+    const { mkdirSync, rmSync } = await import("node:fs");
+    const dbDir = join(testHome, "costlens");
+    rmSync(dbDir, { recursive: true, force: true });
+    mkdirSync(dbDir, { recursive: true });
+    const v1Path = join(dbDir, "ledger.db");
+    // Simulate a v1 DB by running the v1 schema, no v2 objects.
+    const v1 = new DatabaseSync(v1Path);
+    v1.exec(`
+      CREATE TABLE features (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        status TEXT NOT NULL,
+        cap_usd REAL,
+        started_at TEXT NOT NULL,
+        closed_at TEXT,
+        pricing_conf TEXT NOT NULL,
+        total_cost_usd REAL NOT NULL DEFAULT 0,
+        total_input INTEGER NOT NULL DEFAULT 0,
+        total_output INTEGER NOT NULL DEFAULT 0,
+        total_cache_read INTEGER NOT NULL DEFAULT 0,
+        total_cache_write INTEGER NOT NULL DEFAULT 0,
+        turn_count INTEGER NOT NULL DEFAULT 0,
+        first_activity_at TEXT,
+        last_activity_at TEXT
+      );
+    `);
+    v1.close();
+    // Now open with our migrate() which should ALTER TABLE to add the column.
+    const { closeDb, initDb, getDb } = await import("../extension/db.js");
+    closeDb();
+    initDb();
+    const cols = getDb()
+      .prepare(`PRAGMA table_info(features)`)
+      .all() as Array<{ name: string }>;
+    assert.ok(
+      cols.some((c) => c.name === "subagent_cost_usd"),
+      "subagent_cost_usd column added by migration"
+    );
+    // Re-migrate: should be a no-op (no error, column still there).
+    closeDb();
+    initDb();
+    const cols2 = getDb()
+      .prepare(`PRAGMA table_info(features)`)
+      .all() as Array<{ name: string }>;
+    assert.ok(cols2.some((c) => c.name === "subagent_cost_usd"));
+  });
+});
+
 describe("exportLedger + exportLedgerCsv", () => {
   test("exportLedger returns all tables in one object", async () => {
     const { addTag, attachNote, exportLedger } = await import("../extension/lifecycle.js");
@@ -637,19 +883,22 @@ describe("exportLedger + exportLedgerCsv", () => {
     assert.ok(data.notes.some((row) => row.body === "a note"));
   });
 
-  test("exportLedgerCsv has 5 sections with header lines", async () => {
+  test("exportLedgerCsv has 7 sections with header lines", async () => {
     const { addTag, exportLedgerCsv } = await import("../extension/lifecycle.js");
     const f = await openFeature("exp-2");
     addTag(f.id, "v1");
     const csv = exportLedgerCsv();
     const sectionCount = (csv.match(/^# /gm) ?? []).length;
-    assert.equal(sectionCount, 5, `expected 5 section markers, got ${sectionCount}`);
+    // 5 base + subagent_runs + tool_calls (Phase 7) = 7
+    assert.equal(sectionCount, 7, `expected 7 section markers, got ${sectionCount}`);
     // Each section has a header row directly after the marker
     assert.match(csv, /# features\nid,name,branch,status/);
     assert.match(csv, /# messages\nid,feature_id,session_id/);
     assert.match(csv, /# notes\nid,feature_id,body,created_at/);
     assert.match(csv, /# tags\nfeature_id,tag/);
     assert.match(csv, /# sessions\nid,feature_id,cwd,started_at,last_seen/);
+    assert.match(csv, /# subagent_runs\nid,feature_id,parent_message_id/);
+    assert.match(csv, /# tool_calls\nid,feature_id,message_id,tool_name/);
   });
 
   test("exportLedgerCsv quotes values containing commas", async () => {

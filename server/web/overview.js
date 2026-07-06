@@ -247,6 +247,25 @@ function render(o) {
       </tr>
     `).join("");
 
+  // Top sub-agents (Phase 7)
+  const topSub = o.topSubagents || [];
+  const subCard = $("#top-subagents-card");
+  if (topSub.length === 0) {
+    subCard.hidden = true;
+  } else {
+    subCard.hidden = false;
+    $("#top-subagents tbody").innerHTML = topSub.map(s => {
+      const avg = s.runs > 0 ? s.cost / s.runs : 0;
+      return `<tr>
+        <td><span class="agent-chip">${escape(s.agent)}</span></td>
+        <td class="num">${fmtInt(s.runs)}</td>
+        <td class="num">${fmt(s.cost)}</td>
+        <td class="num">${fmt(avg)}</td>
+        <td class="num">${fmtInt(s.turns)}</td>
+      </tr>`;
+    }).join("");
+  }
+
   // byStatus list
   $("#by-status").innerHTML = [
     ["open", o.byStatus.open],

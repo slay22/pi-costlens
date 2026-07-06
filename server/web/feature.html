@@ -60,6 +60,61 @@
       <ul id="notes-list"></ul>
     </section>
 
+    <section class="card" id="subagents-card" hidden>
+      <h2>Sub-agents</h2>
+      <p class="muted">Cost and token usage from the subagent extension's invocations on this feature.</p>
+      <div class="table-wrap">
+        <table id="subagents-table">
+          <thead>
+            <tr>
+              <th>Agent</th>
+              <th class="num">Runs</th>
+              <th class="num">Cost</th>
+              <th class="num">Avg / run</th>
+              <th class="num">In</th>
+              <th class="num">Out</th>
+              <th class="num">Turns</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+          <tfoot></tfoot>
+        </table>
+      </div>
+      <details class="chart-details">
+        <summary>all sub-agent runs</summary>
+        <div class="table-wrap">
+          <table id="subagent-runs">
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Agent</th>
+                <th>Model</th>
+                <th class="num">Step</th>
+                <th class="num">In</th>
+                <th class="num">Out</th>
+                <th class="num">Cost</th>
+                <th>Task</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </details>
+    </section>
+
+    <section class="card" id="tools-card" hidden>
+      <h2>Tool usage</h2>
+      <p class="muted">Counts of non-Agent tool invocations on this feature. No LLM cost — just usage analytics.</p>
+      <div class="table-wrap">
+        <table id="tools-table">
+          <thead>
+            <tr><th>Tool</th><th class="num">Calls</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
     <section class="card">
       <h2>Cost over time</h2>
       <div id="timeline-chart" class="chart"></div>
@@ -76,7 +131,7 @@
   </main>
 
   <footer>
-    <span>Costlens v0.6.0 · auto-refresh every 5s</span>
+    <span>Costlens v0.7.0 · auto-refresh every 5s</span>
   </footer>
 
   <script src="/vendor/uplot.iife.min.js"></script>
