@@ -6,6 +6,8 @@
  *   1. Insert/update the message row (idempotent on `id`).
  *   2. Recompute the parent feature's totals from the messages table.
  *   3. Recompute the feature's pricing_confidence.
+ *   4. (Phase 6) Check the new total against cap thresholds and fire
+ *      a notification + webhook for any that were just crossed.
  *
  * Idempotency matters because pi re-emits events on session reload.
  */
@@ -13,7 +15,8 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getDb } from "./db.js";
 import { computePricingConfidence } from "./pricing.js";
-import { getCurrentFeatureId } from "./lifecycle.js";
+import { getCurrentFeatureId, getFeature } from "./lifecycle.js";
+import { fireThresholdNotification } from "./notifications.js";
 
 export function registerHooks(pi: ExtensionAPI): void {
   pi.on("message_end", async (event, ctx) => {
@@ -99,5 +102,14 @@ export function registerHooks(pi: ExtensionAPI): void {
     // (it's a small read, doesn't need to block the write).
     const conf = computePricingConfidence(db, featureId);
     db.prepare(`UPDATE features SET pricing_conf = ? WHERE id = ?`).run(conf, featureId);
+
+    // Phase 6: threshold notifications. The feature is read fresh from
+    // the DB (its totals just got updated) and only fires if it has a
+    // cap set. Debounce lives inside `fireThresholdNotification`; this
+    // call is safe to make on every message_end.
+    const updated = getFeature(featureId);
+    if (updated && updated.cap_usd != null && updated.cap_usd > 0) {
+      fireThresholdNotification(updated, updated.total_cost_usd, updated.cap_usd, ctx);
+    }
   });
 }

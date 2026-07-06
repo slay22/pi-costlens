@@ -1,8 +1,8 @@
 # Costlens
 
-A pi extension that books the real dollar cost of every assistant message to a **feature** (a git branch you're working on), with a local web dashboard for stats — and the command surface to tag, search, note, and export it all.
+A pi extension that books the real dollar cost of every assistant message to a **feature** (a git branch you're working on), with a local web dashboard for stats — and the command surface to tag, search, note, export, and be **notified** when you cross a cap.
 
-> **Status: Phase 5 (polish) — shipped.** Tags, notes, merge, search, export, full dashboard. See [PHASE5.md](./PHASE5.md) for the latest phase plan and [PLAN.md](./PLAN.md) for the overall roadmap.
+> **Status: Phase 6 (notifications) — shipped.** Native OS notifications on cap hits, daily digest, optional webhook. See [PHASE6.md](./PHASE6.md) for the latest phase plan and [PLAN.md](./PLAN.md) for the overall roadmap.
 
 ## What it does
 
@@ -19,6 +19,9 @@ A pi extension that books the real dollar cost of every assistant message to a *
 - `search` to find features by id/name fragment
 - `export` to dump the ledger (CSV / JSON) for accounting or backup
 - A Bun-served local web dashboard with overview, per-feature drill-down, tag chips, a search box, and uPlot charts
+- **Native OS notifications** when a feature's cost crosses 50% / 80% / 100% / 110% of its cap (each threshold fires once per feature per session)
+- **Optional webhook** (Slack/Discord incoming webhook, or any HTTP POST) on threshold crossings
+- **Daily digest** at session_start: one-line summary of yesterday's spend above a configurable USD threshold
 
 ## Install (dev)
 
@@ -82,6 +85,13 @@ The dashboard server is a separate Bun process; it spawns on demand via `/featur
 | `/feature tag list` | List tags on the current feature |
 | `/feature export json` | Dump the full ledger as JSON to stdout |
 | `/feature export csv` | Dump the full ledger as CSV (5 sections) to stdout |
+| `/feature notify-test` | Fire a test notification (in-pi + native) |
+| `/feature notify-config` | Print current notification config |
+| `/feature notify-config on\|off` | Master switch |
+| `/feature notify-config webhook <url>\|clear` | Set or clear the webhook URL |
+| `/feature notify-config daily-digest on\|off` | Toggle the daily digest |
+| `/feature notify-config daily-threshold <usd>` | Set the digest threshold |
+| `/feature notify-config thresholds <list>` | Override thresholds (e.g. `0.5,0.8,1.0,1.1`) |
 | `/feature dashboard` | Start server + open browser to overview |
 | `/feature dashboard --detach` | Start server that survives pi exit |
 | `/feature dashboard stop` | Kill the running server |
@@ -145,6 +155,66 @@ The dashboard server exposes a small JSON API on `http://localhost:<port>`:
 
 Text markers are always present, even if pi's TUI strips ANSI — you can always tell the level from a glance.
 
+## Notifications (Phase 6)
+
+When a feature's cost crosses 50% / 80% / 100% / 110% of its cap, you get a native OS notification (macOS Notification Center, Linux `notify-send`, Windows BurntToast) plus an in-pi banner. Each threshold fires at most once per feature per session; `reopen` re-arms the debounce.
+
+Platform commands are best-effort with a 1.5s timeout — if the OS notifier isn't available, the in-pi path still works. The native call never throws.
+
+### Configuration
+
+`~/.pi/costlens/config.json` gains an optional `notifications` block:
+
+```json
+{
+  "port": 7331,
+  "notifications": {
+    "enabled": true,
+    "thresholds": [0.5, 0.8, 1.0, 1.1],
+    "webhook": null,
+    "dailyDigest": true,
+    "dailyDigestThresholdUsd": 0.5
+  }
+}
+```
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `enabled` | bool | `true` | Master switch |
+| `thresholds` | number[] | `[0.5, 0.8, 1.0, 1.1]` | Ratios that fire (0.5 = 50% of cap) |
+| `webhook` | string \| null | `null` | URL to POST on threshold crossing (Slack-compatible) |
+| `dailyDigest` | bool | `true` | Show yesterday's spend on session_start |
+| `dailyDigestThresholdUsd` | number | `0.5` | Only mention features above this $ |
+
+### Webhook payload
+
+A Slack-compatible shape (so it just works as a Slack incoming webhook):
+
+```json
+{
+  "text": "🚨 *feat/phase-6-notifications* hit 80% of $5.00 cap — $4.00 / $5.00",
+  "feature": "feat/phase-6-notifications",
+  "threshold": 0.8,
+  "cost": 4.0,
+  "cap": 5.0,
+  "level": "warn"
+}
+```
+
+POSTed as JSON, 2s timeout, fire-and-forget. The webhook URL must start with `http://` or `https://`. Failures are logged to stderr; they never crash the extension.
+
+### Daily digest
+
+On every `session_start`, if any feature spent more than `dailyDigestThresholdUsd` yesterday (UTC), costlens shows a one-line summary in pi:
+
+```
+Costlens — yesterday (2026-07-02): $4.23 across 12 turns
+  feat/phase-6-notifications      $2.50  (7 turns)
+  feat/phase-5-polish             $1.73  (5 turns)
+```
+
+The digest also fires the native notifier, so you'll see it as a banner even when you're not in the pi TUI.
+
 ## Export format
 
 **JSON** is a single object:
@@ -179,14 +249,15 @@ costlens/
 ├── extension/         # runs in pi (Node, loaded via jiti)
 │   ├── index.ts       # entry
 │   ├── db.ts          # SQLite schema + queries (Node)
-│   ├── hooks.ts       # message_end handler
+│   ├── hooks.ts       # message_end handler (+ threshold notify on cost update)
 │   ├── lifecycle.ts   # feature creation/lookup/merge/tags/notes/search/export
 │   ├── git.ts         # branch detection
 │   ├── commands.ts    # /feature <subcommand>
 │   ├── pricing.ts     # confidence calc
 │   ├── footer.ts      # status bar
 │   ├── server.ts      # dashboard server lifecycle (spawn / kill)
-│   └── config.ts      # ~/.pi/costlens/config.json
+│   ├── config.ts      # ~/.pi/costlens/config.json (+ notifications block)
+│   └── notifications.ts  # native notif + webhook + debounce + daily digest
 ├── server/            # runs in Bun (dashboard)
 │   ├── index.ts       # Bun.serve() entry
 │   ├── db.ts          # bun:sqlite (read-only) + export helpers
@@ -202,14 +273,16 @@ costlens/
 │       └── vendor/
 │           └── uplot.iife.min.js
 ├── test/
-│   ├── extension.test.ts  # extension smoke
-│   ├── footer.test.ts     # footer formatter
-│   ├── lifecycle.test.ts  # DB + lifecycle (Node)
-│   └── server.test.ts     # server queries + API (Bun)
+│   ├── extension.test.ts     # extension smoke
+│   ├── footer.test.ts        # footer formatter
+│   ├── lifecycle.test.ts     # DB + lifecycle (Node)
+│   ├── notifications.test.ts # Phase 6: notif, webhook, digest
+│   └── server.test.ts        # server queries + API (Bun)
 ├── package.json
 ├── tsconfig.json
 ├── PLAN.md
 ├── PHASE5.md
+├── PHASE6.md
 └── README.md
 ```
 
@@ -223,7 +296,7 @@ npm test
 bun test test/server.test.ts
 ```
 
-Current: **79 extension tests + 39 server tests**, all green.
+Current: **98 extension tests + 39 server tests**, all green.
 
 ## License
 
