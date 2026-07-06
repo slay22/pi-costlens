@@ -28,6 +28,8 @@ import {
   LifecycleError,
   type Feature,
 } from "./lifecycle.js";
+import { readConfig, writeConfig } from "./config.js";
+import { startServer, stopServer, openBrowser } from "./server.js";
 
 export type CommandDeps = {
   getActiveFeatureId: () => string | null;
@@ -63,6 +65,13 @@ export function registerCommands(pi: ExtensionAPI, deps: CommandDeps): void {
             return doSetCap(ctx, deps, rest);
           case "reopen":
             return doReopen(ctx, deps);
+          case "dashboard":
+            return doDashboard(ctx, deps, rest);
+          case "open":
+            return doOpen(ctx, deps, rest);
+          case "set-port":
+          case "setport":
+            return doSetPort(ctx, deps, rest);
           default:
             await ctx.ui.notify(
               `Costlens: unknown subcommand "${sub}". Try /feature help`,
@@ -83,7 +92,7 @@ export function registerCommands(pi: ExtensionAPI, deps: CommandDeps): void {
 
 async function showHelp(ctx: ExtensionContext): Promise<void> {
   const text =
-    `Costlens — feature-based cost tracking (Phase 3)
+    `Costlens — feature-based cost tracking (Phase 4)
 
 View:
   /feature help                   This help
@@ -98,13 +107,21 @@ Manage the current feature:
   /feature set-cap <usd>          Soft cap; pass 0 to clear
                                   Warns in the footer at 80% and over 100%
 
+Dashboard (Phase 4):
+  /feature dashboard              Start server + open browser to overview
+  /feature dashboard --detach     Start server that survives pi exit
+  /feature dashboard stop         Kill the running server
+  /feature open <name>            Open feature detail page
+  /feature set-port <N>           Set the dashboard port (1..65535)
+
 Examples:
   /feature close shipped to prod
   /feature rename Auth refactor
   /feature set-cap 5
   /feature set-cap 0              # clear the cap
+  /feature set-port 8080
+  /feature dashboard
 
-Coming in Phase 4: dashboard (Bun server on localhost:7331)
 Phase 5: tags, notes, merge, search, export
 
 See PLAN.md for the full roadmap.`;
@@ -302,4 +319,84 @@ async function doReopen(ctx: ExtensionContext, deps: CommandDeps): Promise<void>
   const f = reopenFeature(id);
   deps.refreshFooter(ctx);
   await ctx.ui.notify(`Costlens: reopened "${f.name}" (status: ${f.status}).`, "info");
+}
+
+async function doDashboard(ctx: ExtensionContext, _deps: CommandDeps, rest: string): Promise<void> {
+  const args = rest.split(/\s+/).filter(Boolean);
+  const detach = args.includes("--detach");
+  const stop = args.includes("stop");
+
+  if (stop) {
+    const res = await stopServer();
+    if (res.stopped) {
+      await ctx.ui.notify(`Costlens: server stopped (pid ${res.pid ?? "?"}).`, "info");
+    } else {
+      await ctx.ui.notify("Costlens: no server running.", "info");
+    }
+    return;
+  }
+
+  try {
+    const handle = await startServer({ detach });
+    const url = `http://localhost:${handle.port}/`;
+    if (ctx.hasUI) {
+      try {
+        await openBrowser(url);
+        await ctx.ui.notify(
+          `Costlens: dashboard at ${url}${detach ? " (detached, pid " + handle.pid + ")" : ""}`,
+          "info"
+        );
+      } catch {
+        await ctx.ui.notify(
+          `Costlens: dashboard at ${url} (couldn't open browser)${detach ? ` (detached, pid ${handle.pid})` : ""}`,
+          "info"
+        );
+      }
+    } else {
+      // No UI (print/JSON mode): just print the URL.
+      process.stdout.write(`costlens-dashboard: ${url}\n`);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await ctx.ui.notify(`Costlens: failed to start dashboard — ${msg}`, "error");
+  }
+}
+
+async function doOpen(ctx: ExtensionContext, _deps: CommandDeps, rest: string): Promise<void> {
+  const name = rest.trim();
+  if (!name) {
+    await ctx.ui.notify("Costlens: usage: /feature open <feature-name-or-id>", "warning");
+    return;
+  }
+  try {
+    const handle = await startServer({ detach: false });
+    const url = `http://localhost:${handle.port}/feature/${encodeURIComponent(name)}`;
+    if (ctx.hasUI) {
+      try {
+        await openBrowser(url);
+        await ctx.ui.notify(`Costlens: opened "${name}" at ${url}`, "info");
+      } catch {
+        await ctx.ui.notify(`Costlens: ${url} (couldn't open browser)`, "info");
+      }
+    } else {
+      process.stdout.write(`costlens-dashboard: ${url}\n`);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await ctx.ui.notify(`Costlens: failed to open — ${msg}`, "error");
+  }
+}
+
+async function doSetPort(_ctx: ExtensionContext, _deps: CommandDeps, rest: string): Promise<void> {
+  const n = Number(rest);
+  if (!rest || isNaN(n) || n < 1 || n > 65535) {
+    await _ctx.ui.notify("Costlens: usage: /feature set-port <1..65535>", "warning");
+    return;
+  }
+  const current = readConfig();
+  writeConfig({ ...current, port: n });
+  await _ctx.ui.notify(
+    `Costlens: port set to ${n} (was ${current.port}). Restart the dashboard to take effect: /feature dashboard`,
+    "info"
+  );
 }

@@ -27,6 +27,7 @@ import {
   getFeature,
 } from "./lifecycle.js";
 import { renderFooter, clearFooter } from "./footer.js";
+import { stopServer } from "./server.js";
 
 export default function (pi: ExtensionAPI) {
   // Open the DB once the first session starts. The factory itself must not
@@ -78,6 +79,13 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_shutdown", async (_event, ctx) => {
     if (ctx.hasUI) clearFooter(ctx);
+    // Stop the dashboard server if it's a child of this session.
+    // Detached servers are left running.
+    try {
+      await stopServer();
+    } catch {
+      // best-effort
+    }
     closeDb();
     dbReady = false;
   });
