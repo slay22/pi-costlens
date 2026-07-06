@@ -45,14 +45,17 @@ import {
   LifecycleError,
   type Feature,
 } from "./lifecycle.js";
-import { readConfig, writeConfig } from "./config.js";
+import { readConfig, writeConfig, getDefaultThresholds } from "./config.js";
 import { startServer, stopServer, openBrowser } from "./server.js";
+import { notify as sendNotify } from "./notifications.js";
 
 export type CommandDeps = {
   getActiveFeatureId: () => string | null;
   getDb: () => DatabaseSync;
   detectGitContext: (cwd: string) => Promise<{ isRepo: boolean; branch: string | null; isMainBranch: boolean }>;
   refreshFooter: (ctx: ExtensionContext) => void;
+  /** Phase 6: called after a feature is reopened, so the notifications module can clear its debounce. */
+  onReopen?: (featureId: string) => void;
 };
 
 export function registerCommands(pi: ExtensionAPI, deps: CommandDeps): void {
@@ -92,6 +95,10 @@ export function registerCommands(pi: ExtensionAPI, deps: CommandDeps): void {
             return doSearch(ctx, deps, rest);
           case "export":
             return doExport(ctx, deps, rest);
+          case "notify-test":
+            return doNotifyTest(ctx, deps, rest);
+          case "notify-config":
+            return doNotifyConfig(ctx, deps, rest);
           case "dashboard":
             return doDashboard(ctx, deps, rest);
           case "open":
@@ -119,7 +126,7 @@ export function registerCommands(pi: ExtensionAPI, deps: CommandDeps): void {
 
 async function showHelp(ctx: ExtensionContext): Promise<void> {
   const text =
-    `Costlens — feature-based cost tracking (Phase 5)
+    `Costlens — feature-based cost tracking (Phase 6)
 
 View:
   /feature help                   This help
@@ -134,7 +141,8 @@ Manage the current feature:
   /feature reopen                 Re-open a closed/cancelled/merged feature
   /feature rename <name>          Rename the feature (id & branch stay the same)
   /feature set-cap <usd>          Soft cap; pass 0 to clear
-                                  Warns in the footer at 80% and over 100%
+                                  Notifies (in-pi + native + optional webhook) at
+                                  50% / 80% / 100% / 110% of cap
   /feature note <text>            Attach a note (timestamped, standalone)
   /feature tag add <t>            Tag the current feature (free-form, lowercased)
   /feature tag remove <t>         Remove a tag
@@ -143,6 +151,15 @@ Manage the current feature:
 Export (stdout):
   /feature export json            Full ledger as JSON
   /feature export csv             Full ledger as CSV (5 sections)
+
+Notifications (Phase 6):
+  /feature notify-test            Fire a test notification (in-pi + native)
+  /feature notify-config          Print current notification config
+  /feature notify-config on|off   Master switch
+  /feature notify-config webhook <url>|clear
+  /feature notify-config daily-digest on|off
+  /feature notify-config daily-threshold <usd>
+  /feature notify-config thresholds <list>   e.g. 0.5,0.8,1.0,1.1
 
 Dashboard:
   /feature dashboard              Start server + open browser to overview
@@ -157,8 +174,10 @@ Examples:
   /feature close shipped to prod
   /feature rename Auth refactor
   /feature set-cap 5
-  /feature set-cap 0              # clear the cap
   /feature search auth
+  /feature notify-test
+  /feature notify-config webhook https://hooks.slack.com/...
+  /feature notify-config daily-digest off
   /feature export json > backup.json
   /feature dashboard
 
@@ -403,6 +422,9 @@ async function doReopen(ctx: ExtensionContext, deps: CommandDeps): Promise<void>
   }
   const f = reopenFeature(id);
   deps.refreshFooter(ctx);
+  // Phase 6: clear the notification debounce for this feature so a
+  // reopened feature can fire again as it crosses new thresholds.
+  deps.onReopen?.(id);
   await ctx.ui.notify(`Costlens: reopened "${f.name}" (status: ${f.status}).`, "info");
 }
 
@@ -539,6 +561,127 @@ async function doExport(ctx: ExtensionContext, _deps: CommandDeps, rest: string)
   // CSV
   const csv = exportLedgerCsv();
   process.stdout.write(csv + "\n");
+}
+
+// ---------------------------------------------------------------------------
+// Phase 6: notifications
+// ---------------------------------------------------------------------------
+
+async function doNotifyTest(ctx: ExtensionContext, _deps: CommandDeps, _rest: string): Promise<void> {
+  await sendNotify(
+    "Costlens test",
+    `This is a test notification from costlens at ${new Date().toISOString()}. ` +
+      `If you can read this, the platform notifier works.`,
+    "info",
+    ctx
+  );
+  await ctx.ui.notify("Costlens: test notification sent (in-pi + native if available).", "info");
+}
+
+async function doNotifyConfig(ctx: ExtensionContext, _deps: CommandDeps, rest: string): Promise<void> {
+  const trimmed = rest.trim();
+  if (!trimmed) {
+    await printNotifyConfig(ctx);
+    return;
+  }
+  // First token is the subcommand, rest is the value (for set-style commands).
+  const space = trimmed.search(/\s/);
+  const sub = space === -1 ? trimmed : trimmed.slice(0, space);
+  const value = space === -1 ? "" : trimmed.slice(space + 1).trim();
+
+  const cfg = readConfig();
+  switch (sub) {
+    case "on":
+      writeConfig({ ...cfg, notifications: { ...cfg.notifications, enabled: true } });
+      await ctx.ui.notify("Costlens: notifications enabled.", "info");
+      return;
+    case "off":
+      writeConfig({ ...cfg, notifications: { ...cfg.notifications, enabled: false } });
+      await ctx.ui.notify("Costlens: notifications disabled.", "info");
+      return;
+    case "webhook": {
+      if (!value || value === "clear") {
+        writeConfig({ ...cfg, notifications: { ...cfg.notifications, webhook: null } });
+        await ctx.ui.notify("Costlens: webhook cleared.", "info");
+        return;
+      }
+      // Basic sanity check: must be http(s)://
+      if (!/^https?:\/\//i.test(value)) {
+        await ctx.ui.notify("Costlens: webhook URL must start with http:// or https://", "warning");
+        return;
+      }
+      writeConfig({ ...cfg, notifications: { ...cfg.notifications, webhook: value } });
+      await ctx.ui.notify(`Costlens: webhook set to ${value}`, "info");
+      return;
+    }
+    case "daily-digest":
+    case "digest": {
+      if (value !== "on" && value !== "off") {
+        await ctx.ui.notify("Costlens: usage: /feature notify-config daily-digest on|off", "warning");
+        return;
+      }
+      writeConfig({
+        ...cfg,
+        notifications: { ...cfg.notifications, dailyDigest: value === "on" },
+      });
+      await ctx.ui.notify(`Costlens: daily digest ${value === "on" ? "enabled" : "disabled"}.`, "info");
+      return;
+    }
+    case "daily-threshold": {
+      const n = Number(value);
+      if (!value || isNaN(n) || n < 0) {
+        await ctx.ui.notify("Costlens: usage: /feature notify-config daily-threshold <usd>", "warning");
+        return;
+      }
+      writeConfig({
+        ...cfg,
+        notifications: { ...cfg.notifications, dailyDigestThresholdUsd: n },
+      });
+      await ctx.ui.notify(`Costlens: daily digest threshold set to $${n.toFixed(2)}.`, "info");
+      return;
+    }
+    case "thresholds": {
+      const parts = value.split(/[,\s]+/).filter(Boolean);
+      const nums = parts.map(Number);
+      if (nums.length === 0 || nums.some((n) => isNaN(n) || n <= 0 || n > 10)) {
+        await ctx.ui.notify(
+          `Costlens: usage: /feature notify-config thresholds <list>\n` +
+            `Comma-separated ratios, each in (0, 10]. e.g. 0.5,0.8,1.0,1.1\n` +
+            `Default: ${getDefaultThresholds().join(", ")}`,
+          "warning"
+        );
+        return;
+      }
+      writeConfig({ ...cfg, notifications: { ...cfg.notifications, thresholds: nums } });
+      await ctx.ui.notify(`Costlens: thresholds set to ${nums.join(", ")}.`, "info");
+      return;
+    }
+    case "reset": {
+      writeConfig({ ...cfg, notifications: { ...cfg.notifications, thresholds: getDefaultThresholds() } });
+      await ctx.ui.notify(`Costlens: thresholds reset to defaults (${getDefaultThresholds().join(", ")}).`, "info");
+      return;
+    }
+    default:
+      await ctx.ui.notify(
+        `Costlens: unknown notify-config subcommand "${sub}".\n` +
+          `Try: on, off, webhook, daily-digest, daily-threshold, thresholds, reset`,
+        "warning"
+      );
+  }
+}
+
+async function printNotifyConfig(ctx: ExtensionContext): Promise<void> {
+  const cfg = readConfig();
+  const n = cfg.notifications;
+  const lines = [
+    `Costlens notifications`,
+    `  enabled:        ${n.enabled ? "yes" : "no"}`,
+    `  thresholds:     ${n.thresholds.join(", ")}`,
+    `  webhook:        ${n.webhook ?? "(none)"}`,
+    `  daily digest:   ${n.dailyDigest ? "yes" : "no"}`,
+    `  digest min $:   $${n.dailyDigestThresholdUsd.toFixed(2)}`,
+  ];
+  await ctx.ui.notify(lines.join("\n"), "info");
 }
 
 async function doDashboard(ctx: ExtensionContext, _deps: CommandDeps, rest: string): Promise<void> {
