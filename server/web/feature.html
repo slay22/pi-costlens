@@ -36,6 +36,40 @@
       </div>
     </section>
 
+    <section class="card" id="actions-card">
+      <h2>Actions</h2>
+
+      <div class="action-row">
+        <span class="action-label">Status</span>
+        <span class="badge" id="actions-status">…</span>
+        <span class="action-buttons" id="status-buttons"></span>
+      </div>
+
+      <div class="action-row">
+        <span class="action-label">Cap</span>
+        <span id="actions-cap-display" class="muted">—</span>
+        <input type="number" id="cap-input" min="0" step="0.01" placeholder="USD" autocomplete="off" />
+        <button id="cap-save" type="button">Set cap</button>
+        <button id="cap-clear" type="button" class="ghost">Clear</button>
+      </div>
+
+      <div class="action-row">
+        <span class="action-label">Tags</span>
+        <div class="tag-list" id="actions-tags"></div>
+        <input type="text" id="tag-input" placeholder="add tag…" autocomplete="off" />
+        <button id="tag-add" type="button">+ add</button>
+      </div>
+
+      <div class="action-row action-row-vertical">
+        <span class="action-label">Notes</span>
+        <ul id="actions-notes" class="actions-notes-list"></ul>
+        <textarea id="note-input" placeholder="add a note…" rows="2"></textarea>
+        <div class="action-row-buttons">
+          <button id="note-add" type="button">Save note</button>
+        </div>
+      </div>
+    </section>
+
     <section class="card">
       <h2>Details</h2>
       <dl id="details">
@@ -133,6 +167,24 @@
   <footer>
     <span>Costlens v0.7.0 · auto-refresh every 5s</span>
   </footer>
+
+  <!-- Confirmation modal for status transitions (close / cancel / merge).
+       Hidden by default; the JS in feature.js shows it when a destructive
+       action is requested. -->
+  <div class="modal-backdrop" id="modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <h3 id="modal-title">…</h3>
+      <p id="modal-body">…</p>
+      <div class="modal-actions">
+        <button id="modal-cancel" type="button">Cancel</button>
+        <button id="modal-confirm" type="button" class="danger">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast container: success / error messages. The JS appends to it
+       and auto-dismisses after 3s. -->
+  <div class="toast-container" id="toasts" aria-live="polite"></div>
 
   <script src="/vendor/uplot.iife.min.js"></script>
   <script src="/feature.js"></script>

@@ -1,12 +1,23 @@
 /**
- * Read-only SQLite access for the Costlens dashboard server (Bun).
+ * SQLite access for the Costlens dashboard server (Bun).
  *
- * Uses `bun:sqlite` with `readonly: true` and `fileMustExist: true`. The
- * extension's writes happen against the same DB in WAL mode, so the
- * server never blocks the writer and vice versa.
+ * Phase 4 (and earlier) opened the DB in read-only mode. The server
+ * had no write endpoints, so the DB was effectively a read replica.
+ * Phase 7.5 (PHASE7.5.md) adds write endpoints (close, cancel, merge,
+ * reopen, setCap, addTag, removeTag, attachNote) so the DB is now
+ * opened in read-write mode. The extension remains the primary writer
+ * (every `message_end` event); the server is a secondary writer
+ * (user actions in the dashboard). SQLite WAL serializes writes
+ * between the two processes — there is no corruption risk.
  *
- * All query functions throw on schema errors. The HTTP layer maps those
- * to 500s; missing features return `undefined` and become 404s.
+ * Reads (overview, feature detail, messages, export, search) still
+ * come from this module. Writes live in `lifecycle.ts` and are
+ * exposed as a small set of functions, each wrapping a single SQL
+ * statement (or a small transaction). The HTTP layer never executes
+ * SQL directly.
+ *
+ * All query functions throw on schema errors. The HTTP layer maps
+ * those to 500s; missing features return `null` and become 404s.
  */
 
 import { Database } from "bun:sqlite";
@@ -129,10 +140,18 @@ export function openDb(path: string = DB_PATH): Database {
       `Costlens DB not found at ${path}; has the extension been run yet?`
     );
   }
-  // `readonly: true` so the server can never write. (Bun's
-  // DatabaseSync doesn't accept `fileMustExist` — if the path is wrong
-  // or missing, the open call will throw with a clear error.)
-  _db = new Database(path, { readonly: true });
+  // Phase 7.5: opened in read-write mode (the bun:sqlite default —
+  // no `readonly` flag) so the lifecycle write endpoints can act on
+  // features. The extension is the primary writer; the server is a
+  // secondary writer. SQLite WAL serializes writes between the two
+  // processes. The extension owns DB creation; we just open it.
+  _db = new Database(path);
+  // Match the extension's WAL pragma so concurrent writes from
+  // the extension don't block the server. The extension sets this
+  // at init, but if the server starts before any extension activity
+  // the DB might still be in journal mode. Belt + suspenders.
+  _db.exec(`PRAGMA journal_mode = WAL;`);
+  _db.exec(`PRAGMA busy_timeout = 5000;`);
   return _db;
 }
 

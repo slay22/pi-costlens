@@ -3,9 +3,21 @@
  * /api/features/:id/messages, renders the page, draws a uPlot cost
  * timeline, and auto-refreshes every 5 seconds.
  *
- * Cost-over-time chart: cumulative cost across this feature's messages,
- * one point per message. The recent-messages table below shows the
- * same data row-by-row for accessibility.
+ * Phase 7.5: the page is no longer read-only. The Actions card lets
+ * the user close / cancel / merge / reopen the feature, set or clear
+ * the cap, add or remove tags, and attach notes — all without
+ * leaving the dashboard. See PHASE7.5.md for the design.
+ *
+ *   - Status transitions: confirmation modal (close/cancel/merge),
+ *     single button (reopen). Re-fetch the feature on success.
+ *   - Cap: input + Set / Clear buttons. Inline validation.
+ *   - Tags: optimistic add/remove with rollback on error.
+ *   - Notes: form at the bottom of the Actions card; appends to the
+ *     list and shows a success toast.
+ *
+ * The 5-second polling continues in the background; on a successful
+ * write we trigger an immediate re-fetch so the rest of the page
+ * reflects the new state without waiting up to 5s.
  */
 
 const $ = (sel) => document.querySelector(sel);
@@ -132,6 +144,12 @@ function renderTimelineChart(el, msgs, cap) {
 let lastFeature = null;
 let lastMessages = null;
 
+/**
+ * Reload the feature from the server. The page's 5s polling
+ * (`setInterval(load, 5000)`) calls this too, but write handlers
+ * also call it after a successful mutation so the rest of the page
+ * reflects the new state without waiting.
+ */
 async function load() {
   setConn("loading", "…");
   let feature, messages, subagents, subagentRuns, tools;
@@ -259,6 +277,9 @@ function render(f, msgs, subagents, subagentRuns, tools) {
   // Tool usage card (Phase 7)
   renderTools(tools || []);
 
+  // Actions card (Phase 7.5)
+  renderActions(f);
+
   // Recent messages (most recent first)
   const tbody = $("#timeline tbody");
   const reversed = msgs.slice().reverse();
@@ -280,6 +301,7 @@ function render(f, msgs, subagents, subagentRuns, tools) {
   });
 }
 
+<<<<<<< HEAD
 function renderSubagents(summary, runs) {
   const card = $("#subagents-card");
   if (!summary || summary.length === 0) {
@@ -346,6 +368,386 @@ function renderTools(counts) {
   </tr>`).join("");
 }
 
+=======
+// ---------------------------------------------------------------------------
+// Actions card
+// ---------------------------------------------------------------------------
+
+function renderActions(f) {
+  // Status badge
+  const statusEl = $("#actions-status");
+  statusEl.textContent = f.status;
+  statusEl.className = `badge ${f.status}`;
+
+  // Status transition buttons. Closed features only get Reopen; open
+  // features get Close, Cancel, Merge.
+  const statusButtons = $("#status-buttons");
+  statusButtons.innerHTML = "";
+  if (f.id === "unassigned") {
+    statusButtons.innerHTML = `<span class="muted">Pool — no actions</span>`;
+  } else if (f.status === "open") {
+    statusButtons.appendChild(actionButton("Close", "danger", () => confirmStatusTransition("close", f)));
+    statusButtons.appendChild(actionButton("Cancel", "ghost", () => confirmStatusTransition("cancel", f)));
+    statusButtons.appendChild(actionButton("Merge", "ghost", () => confirmStatusTransition("merge", f)));
+  } else {
+    statusButtons.appendChild(actionButton("Reopen", "primary", () => doReopen(f)));
+  }
+
+  // Cap display
+  const capDisplay = $("#actions-cap-display");
+  capDisplay.textContent = f.cap_usd ? `$${f.cap_usd.toFixed(2)}` : "no cap";
+  capDisplay.className = f.cap_usd ? "" : "muted";
+  // Cap input: don't pre-fill — the user types a new value.
+  const capInput = $("#cap-input");
+  if (capInput && capInput !== document.activeElement) {
+    capInput.value = "";
+    capInput.placeholder = f.cap_usd ? `current $${f.cap_usd.toFixed(2)}` : "USD";
+  }
+  const capClear = $("#cap-clear");
+  capClear.disabled = !f.cap_usd;
+
+  // Tags
+  renderActionTags(f.tags || []);
+
+  // Notes
+  renderActionNotes(f.notes || []);
+}
+
+function actionButton(label, variant, onClick) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.textContent = label;
+  if (variant) b.className = variant;
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+function renderActionTags(tags) {
+  const list = $("#actions-tags");
+  list.innerHTML = "";
+  if (tags.length === 0) {
+    list.innerHTML = `<span class="muted">no tags</span>`;
+    return;
+  }
+  for (const t of tags) {
+    const chip = document.createElement("span");
+    chip.className = `tag ${tagClass(t)}`;
+    chip.dataset.tag = t;
+    chip.innerHTML = `${escape(t)}<button class="tag-remove" type="button" aria-label="Remove tag ${escape(t)}">×</button>`;
+    chip.querySelector(".tag-remove").addEventListener("click", () => doRemoveTag(t, chip));
+    list.appendChild(chip);
+  }
+}
+
+function renderActionNotes(notes) {
+  const list = $("#actions-notes");
+  list.innerHTML = "";
+  if (notes.length === 0) {
+    const li = document.createElement("li");
+    li.className = "empty";
+    li.textContent = "no notes yet";
+    list.appendChild(li);
+    return;
+  }
+  // Most recent first.
+  for (const n of notes.slice().reverse()) {
+    const li = document.createElement("li");
+    li.innerHTML = `
+      <span class="note-body">${escape(n.body)}</span>
+      <time>${escape((n.created_at ?? "").replace("T", " ").slice(0, 19))}</time>
+    `;
+    list.appendChild(li);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Write operations
+// ---------------------------------------------------------------------------
+
+const ACTIONS_API = (id) => `/api/features/${encodeURIComponent(id)}`;
+
+async function doWrite(method, path, body) {
+  const init = {
+    method,
+    headers: { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  };
+  const res = await fetch(path, init);
+  let payload = null;
+  try { payload = await res.json(); } catch { /* non-JSON */ }
+  if (!res.ok) {
+    const msg = payload?.message ?? `HTTP ${res.status}`;
+    const code = payload?.code ?? res.status;
+    throw new LifecycleApiError(code, msg, res.status);
+  }
+  return payload;
+}
+
+class LifecycleApiError extends Error {
+  constructor(public code, message, public status) {
+    super(message);
+    this.name = "LifecycleApiError";
+  }
+}
+
+// ---- status transitions ----
+
+function confirmStatusTransition(action, f) {
+  const verb = action[0].toUpperCase() + action.slice(1);
+  const costAt = f.total_cost_usd;
+  const costStr = `$${costAt.toFixed(4)}`;
+  const titles = {
+    close: `Close "${f.name}"?`,
+    cancel: `Cancel "${f.name}"?`,
+    merge: `Merge "${f.name}"?`,
+  };
+  const bodies = {
+    close: `Cost will freeze at ${costStr}. Use /feature reopen (or the Reopen button) to undo.`,
+    cancel: `Cost will freeze at ${costStr}. This marks the feature as abandoned.`,
+    merge: `Cost will freeze at ${costStr}. The branch is merged but the feature stays in the ledger.`,
+  };
+  const modal = showModal({
+    title: titles[action],
+    body: bodies[action],
+    confirmLabel: verb,
+    confirmVariant: action === "close" ? "danger" : "primary",
+  });
+  modal.then((ok) => {
+    if (!ok) return;
+    doStatusTransition(action, f);
+  });
+}
+
+async function doStatusTransition(action, f) {
+  const path = `${ACTIONS_API(f.id)}/${action}`;
+  const note = await promptTransitionNote(action, f);
+  if (note === null) return; // user cancelled the note prompt
+  try {
+    await doWrite("POST", path, note ? { note } : {});
+    toast(`Feature ${action}${note ? " (note saved)" : ""}.`, "success");
+    await load();
+  } catch (err) {
+    toast(`${action} failed: ${escape(err.message)}`, "error");
+  }
+}
+
+/**
+ * Lightweight prompt for an optional close/cancel/merge note. Returns
+ * the trimmed string, an empty string for "no note", or null if the
+ * user cancelled. A 240-char textarea is plenty for a status note.
+ */
+function promptTransitionNote(action, f) {
+  return new Promise((resolve) => {
+    const trimmed = f.name.length;
+    const initial = `${action[0].toUpperCase() + action.slice(1)} "${f.name}"?`;
+    const modal = showModal({
+      title: initial,
+      body: `<label class="muted" for="modal-note-input" style="display:block;margin-bottom:6px;">Add a note (optional)</label>` +
+        `<textarea id="modal-note-input" rows="3" placeholder="e.g. shipped to prod" style="width:100%;box-sizing:border-box;padding:8px;border-radius:6px;background:var(--surface-2);color:var(--text);border:1px solid var(--border);font:inherit;font-family:inherit;resize:vertical;"></textarea>`,
+      confirmLabel: `${action[0].toUpperCase() + action.slice(1)}`,
+      confirmVariant: action === "close" ? "danger" : "primary",
+    });
+    // Auto-focus the textarea once it's in the DOM.
+    setTimeout(() => {
+      const ta = document.getElementById("modal-note-input");
+      if (ta) ta.focus();
+    }, 0);
+    modal.then((ok) => {
+      if (!ok) return resolve(null);
+      const ta = document.getElementById("modal-note-input");
+      resolve(ta ? ta.value.trim() : "");
+    });
+  });
+}
+
+async function doReopen(f) {
+  try {
+    await doWrite("POST", `${ACTIONS_API(f.id)}/reopen`);
+    toast(`Reopened "${f.name}".`, "success");
+    await load();
+  } catch (err) {
+    toast(`reopen failed: ${escape(err.message)}`, "error");
+  }
+}
+
+// ---- cap ----
+
+async function doSetCap() {
+  const input = $("#cap-input");
+  const raw = input.value.trim();
+  if (raw === "") {
+    toast("Enter a cap amount first.", "error");
+    input.focus();
+    return;
+  }
+  const num = Number(raw);
+  if (!Number.isFinite(num) || num < 0) {
+    toast("Cap must be a non-negative number.", "error");
+    input.focus();
+    return;
+  }
+  try {
+    await doWrite("PATCH", `${ACTIONS_API(featureId)}/cap`, { capUsd: num });
+    toast(num === 0 ? "Cap cleared." : `Cap set to $${num.toFixed(2)}.`, "success");
+    input.value = "";
+    await load();
+  } catch (err) {
+    toast(`cap failed: ${escape(err.message)}`, "error");
+  }
+}
+
+async function doClearCap() {
+  try {
+    await doWrite("PATCH", `${ACTIONS_API(featureId)}/cap`, { capUsd: null });
+    toast("Cap cleared.", "success");
+    await load();
+  } catch (err) {
+    toast(`cap clear failed: ${escape(err.message)}`, "error");
+  }
+}
+
+// ---- tags ----
+
+async function doAddTag() {
+  const input = $("#tag-input");
+  const raw = input.value.trim();
+  if (!raw) {
+    toast("Enter a tag first.", "error");
+    input.focus();
+    return;
+  }
+  // Optimistic: don't render yet, the server will normalise the tag
+  // (lowercase, trim). Wait for the response, then re-render.
+  try {
+    await doWrite("POST", `${ACTIONS_API(featureId)}/tags`, { tag: raw });
+    input.value = "";
+    toast(`Tag added.`, "success");
+    await load();
+  } catch (err) {
+    toast(`tag add failed: ${escape(err.message)}`, "error");
+  }
+}
+
+async function doRemoveTag(tag, chipEl) {
+  // Optimistic: remove the chip immediately, re-insert on error.
+  if (chipEl) chipEl.classList.add("tag-removing");
+  const snapshot = chipEl ? chipEl.outerHTML : null;
+  if (chipEl) chipEl.remove();
+  try {
+    await doWrite("DELETE", `${ACTIONS_API(featureId)}/tags/${encodeURIComponent(tag)}`);
+    toast(`Tag removed.`, "success");
+    await load();
+  } catch (err) {
+    // Roll back the optimistic removal.
+    if (chipEl && snapshot) {
+      const list = $("#actions-tags");
+      // Strip the empty-state placeholder if it sneaked in.
+      const placeholder = list.querySelector(".muted");
+      if (placeholder) placeholder.remove();
+      const div = document.createElement("div");
+      div.innerHTML = snapshot;
+      const restored = div.firstElementChild;
+      if (restored) {
+        restored.classList.remove("tag-removing");
+        restored.querySelector(".tag-remove").addEventListener("click", () => doRemoveTag(tag, restored));
+        list.appendChild(restored);
+      }
+    }
+    toast(`tag remove failed: ${escape(err.message)}`, "error");
+  }
+}
+
+// ---- notes ----
+
+async function doAddNote() {
+  const input = $("#note-input");
+  const raw = input.value.trim();
+  if (!raw) {
+    toast("Note cannot be empty.", "error");
+    input.focus();
+    return;
+  }
+  try {
+    await doWrite("POST", `${ACTIONS_API(featureId)}/notes`, { body: raw });
+    input.value = "";
+    toast(`Note saved.`, "success");
+    await load();
+  } catch (err) {
+    toast(`note save failed: ${escape(err.message)}`, "error");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Modal
+// ---------------------------------------------------------------------------
+
+/**
+ * Show a confirmation modal. Returns a Promise<boolean> that resolves
+ * to true on confirm, false on cancel. The modal is appended to
+ * #modal; existing modal bodies are replaced.
+ */
+function showModal({ title, body, confirmLabel = "Confirm", confirmVariant = "primary" }) {
+  const backdrop = $("#modal");
+  const titleEl = $("#modal-title");
+  const bodyEl = $("#modal-body");
+  const cancelBtn = $("#modal-cancel");
+  const confirmBtn = $("#modal-confirm");
+
+  titleEl.textContent = title;
+  bodyEl.innerHTML = body;
+  confirmBtn.textContent = confirmLabel;
+  confirmBtn.className = confirmVariant || "primary";
+  backdrop.hidden = false;
+
+  return new Promise((resolve) => {
+    const cleanup = (result) => {
+      backdrop.hidden = true;
+      cancelBtn.removeEventListener("click", onCancel);
+      confirmBtn.removeEventListener("click", onConfirm);
+      backdrop.removeEventListener("click", onBackdrop);
+      document.removeEventListener("keydown", onKey);
+      resolve(result);
+    };
+    const onCancel = () => cleanup(false);
+    const onConfirm = () => cleanup(true);
+    const onBackdrop = (e) => { if (e.target === backdrop) cleanup(false); };
+    const onKey = (e) => {
+      if (e.key === "Escape") cleanup(false);
+      if (e.key === "Enter" && document.activeElement?.id !== "modal-note-input") {
+        // Don't submit on Enter inside the textarea — let it insert a newline.
+        if (document.activeElement?.tagName !== "TEXTAREA") cleanup(true);
+      }
+    };
+    cancelBtn.addEventListener("click", onCancel);
+    confirmBtn.addEventListener("click", onConfirm);
+    backdrop.addEventListener("click", onBackdrop);
+    document.addEventListener("keydown", onKey);
+    setTimeout(() => confirmBtn.focus(), 0);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Toasts
+// ---------------------------------------------------------------------------
+
+function toast(message, kind = "info", durationMs = 3000) {
+  const container = $("#toasts");
+  if (!container) return;
+  const t = document.createElement("div");
+  t.className = `toast ${kind}`;
+  t.textContent = message;
+  container.appendChild(t);
+  setTimeout(() => {
+    t.classList.add("fading");
+    setTimeout(() => t.remove(), 250);
+  }, durationMs);
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+>>>>>>> feat/phase-7.5-dashboard-actions
 function escape(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -361,6 +763,25 @@ function tagClass(tag) {
   return "";
 }
 
+// ---------------------------------------------------------------------------
+// Wire up
+// ---------------------------------------------------------------------------
+
 $("#refresh").addEventListener("click", load);
+$("#cap-save").addEventListener("click", doSetCap);
+$("#cap-clear").addEventListener("click", doClearCap);
+$("#cap-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") doSetCap();
+});
+$("#tag-add").addEventListener("click", doAddTag);
+$("#tag-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") doAddTag();
+});
+$("#note-add").addEventListener("click", doAddNote);
+$("#note-input").addEventListener("keydown", (e) => {
+  // Cmd/Ctrl+Enter saves; regular Enter inserts a newline.
+  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") doAddNote();
+});
+
 load();
 setInterval(load, 5000);

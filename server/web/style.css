@@ -440,6 +440,247 @@ a { color: var(--link); }
   .stat .value { font-size: 18px; }
   #search { width: 100%; }
   .card-head { flex-direction: column; align-items: stretch; }
+  .action-row { flex-wrap: wrap; }
+  .action-row .action-label { flex: 1 0 100%; }
+}
+
+/* ---------------------------------------------------------------------------
+   Phase 7.5: Actions card on the feature page
+   --------------------------------------------------------------------------- */
+
+#actions-card { display: flex; flex-direction: column; gap: 16px; }
+
+.action-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.action-row:first-of-type { border-top: none; padding-top: 0; }
+
+.action-row-vertical {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+.action-row-vertical .action-label { margin-bottom: 2px; }
+.action-row-buttons { display: flex; justify-content: flex-end; }
+
+.action-label {
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  min-width: 70px;
+  flex-shrink: 0;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+#actions-cap-display {
+  font-variant-numeric: tabular-nums;
+  min-width: 80px;
+  font-size: 13px;
+}
+
+#cap-input,
+#tag-input,
+#note-input {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 13px;
+}
+#cap-input { width: 110px; }
+#tag-input { width: 160px; max-width: 60vw; }
+#note-input {
+  width: 100%;
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.4;
+}
+#cap-input:focus,
+#tag-input:focus,
+#note-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+#cap-input:disabled,
+#tag-input:disabled,
+#note-input:disabled,
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.ghost {
+  background: transparent;
+}
+
+button.danger {
+  background: var(--over);
+  color: white;
+  border-color: var(--over);
+}
+button.danger:hover { background: var(--over); opacity: 0.85; }
+
+button.primary {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+button.primary:hover { background: var(--accent); opacity: 0.85; }
+
+.actions-notes-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.actions-notes-list li {
+  padding: 8px 12px;
+  background: var(--surface-2);
+  border-radius: 4px;
+  font-size: 13px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+}
+.actions-notes-list .note-body { flex: 1; word-break: break-word; }
+.actions-notes-list time {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.actions-notes-list .empty {
+  background: transparent;
+  color: var(--text-dim);
+  font-style: italic;
+  padding: 4px 0;
+  border: 1px dashed var(--border);
+  justify-content: center;
+}
+
+/* Inline tag chips in the Actions card, with a small × button for removal. */
+#actions-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  min-height: 22px;
+}
+#actions-tags .tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 4px;
+}
+#actions-tags .tag-remove {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  padding: 0 2px;
+  font-size: 14px;
+  line-height: 1;
+  margin-left: 2px;
+  cursor: pointer;
+  opacity: 0.6;
+}
+#actions-tags .tag-remove:hover { opacity: 1; }
+#actions-tags .tag-removing { opacity: 0.4; }
+
+/* ---------------------------------------------------------------------------
+   Confirmation modal
+   --------------------------------------------------------------------------- */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 20px;
+}
+.modal-backdrop[hidden] { display: none; }
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px 24px;
+  max-width: 480px;
+  width: 100%;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+.modal h3 {
+  margin: 0 0 8px 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.modal p {
+  margin: 0 0 16px 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* ---------------------------------------------------------------------------
+   Toasts
+   --------------------------------------------------------------------------- */
+
+.toast-container {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 200;
+  pointer-events: none;
+  max-width: calc(100vw - 40px);
+}
+.toast {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 13px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  pointer-events: auto;
+  animation: toast-in 0.18s ease-out;
+  max-width: 360px;
+}
+.toast.success { border-left-color: var(--accent); }
+.toast.error { border-left-color: var(--over); }
+.toast.info { border-left-color: var(--link); }
+.toast.fading { opacity: 0.4; transition: opacity 0.2s; }
+
+@keyframes toast-in {
+  from { transform: translateX(20px); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
 }
 
 /* Phase 7: sub-agent chips + tables */
