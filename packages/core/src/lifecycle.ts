@@ -595,6 +595,14 @@ export type MessageInsert = {
   cost_unknown: number;
   timestamp: string;
   branch_path: string | null;
+  /**
+   * The tool that produced this row. Phase 9 step 4 (MULTI-TOOL.md
+   * §7). Free-form string: `pi`, `opencode`, `claude-code`,
+   * `manual`, ... Adapters pass their own source; the column has
+   * a `DEFAULT 'pi'` for the v2→v3 migration but the insert path
+   * always sets it explicitly.
+   */
+  source: string;
 };
 
 /**
@@ -617,12 +625,12 @@ export function recordMessageAndUpdateFeature(m: MessageInsert): void {
          id, feature_id, session_id, model, provider,
          input_tokens, output_tokens, cache_read, cache_write,
          cost_usd, cost_input, cost_output, cost_cache_read, cost_cache_write,
-         cost_unknown, timestamp, branch_path
+         cost_unknown, timestamp, branch_path, source
        ) VALUES (
          @id, @feature_id, @session_id, @model, @provider,
          @input_tokens, @output_tokens, @cache_read, @cache_write,
          @cost_usd, @cost_input, @cost_output, @cost_cache_read, @cost_cache_write,
-         @cost_unknown, @timestamp, @branch_path
+         @cost_unknown, @timestamp, @branch_path, @source
        )`
     ).run(m);
     db.prepare(

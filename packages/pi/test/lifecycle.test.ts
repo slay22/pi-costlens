@@ -52,12 +52,25 @@ describe("DB schema", () => {
     assert.ok(names.includes("schema_version"), "schema_version table exists");
   });
 
-  test("schema version is 2", async () => {
+  test("schema version is 3 (after phase 9 step 4)", async () => {
     const { getDb } = await import("../extension/db.js");
     const row = getDb()
       .prepare(`SELECT MAX(version) AS v FROM schema_version`)
       .get() as { v: number };
-    assert.equal(row.v, 2);
+    // Phase 9 step 4 bumps the schema from v2 to v3 to add the
+    // `messages.source` column (the tool that produced each row).
+    // See MULTI-TOOL.md §7.
+    assert.equal(row.v, 3);
+  });
+
+  test("messages.source column exists with default 'pi'", async () => {
+    const { getDb } = await import("../extension/db.js");
+    const cols = getDb()
+      .prepare(`PRAGMA table_info(messages)`)
+      .all() as Array<{ name: string; dflt_value: string | null }>;
+    const source = cols.find((c) => c.name === "source");
+    assert.ok(source, "source column exists on messages");
+    assert.equal(source!.dflt_value, "'pi'", "source defaults to 'pi'");
   });
 });
 

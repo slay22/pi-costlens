@@ -70,7 +70,8 @@ const SCHEMA = `
     cost_cache_write REAL   NOT NULL,
     cost_unknown    INTEGER NOT NULL,
     timestamp       TEXT    NOT NULL,
-    branch_path     TEXT
+    branch_path     TEXT,
+    source          TEXT    NOT NULL DEFAULT 'pi'
   );
 
   CREATE TABLE tags (

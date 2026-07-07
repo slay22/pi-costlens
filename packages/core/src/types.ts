@@ -91,10 +91,15 @@ export type FeatureSummary = {
  * table). `branch_path` is null in v1; the field is reserved for a
  * future "branch as it was at message time" feature.
  *
- * Phase 9 step 4 (MULTI-TOOL.md §7) will add a `source` column to
- * tag each row with the tool that produced it (`pi`, `opencode`,
- * `claude-code`). The migration is `ALTER TABLE messages ADD COLUMN
- * source TEXT NOT NULL DEFAULT 'pi'`.
+ * `source` tags the row with the tool that produced it
+ * (`pi`, `opencode`, `claude-code`, `manual`, ...). Free-form
+ * string, no enum constraint — adding a new tool is a config
+ * change, not a schema change. The default for pre-phase-9 rows is
+ * `pi` (every existing row came from pi, by definition).
+ *
+ * Phase 9 step 4 (MULTI-TOOL.md §7) added this column with
+ * `ALTER TABLE messages ADD COLUMN source TEXT NOT NULL DEFAULT 'pi'`.
+ * Schema v2 → v3.
  */
 export type Message = {
   id: string;
@@ -114,6 +119,7 @@ export type Message = {
   cost_unknown: number;
   timestamp: string;
   branch_path: string | null;
+  source: string;
 };
 
 /** Standalone note attached to a feature. */

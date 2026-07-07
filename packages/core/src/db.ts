@@ -148,11 +148,11 @@ export function ensureCostlensHome(): void {
  *
  *   v1: original features / messages / tags / notes / sessions
  *   v2: sub-agent + per-tool cost attribution (Phase 7)
- *
- * Phase 9 step 4 (MULTI-TOOL.md §7) bumps this to v3 to add
- * `messages.source` (the tool that produced each row).
+ *   v3: messages.source — tag each row with the tool that
+ *       produced it (pi, opencode, claude-code, manual, ...).
+ *       Phase 9 step 4 (MULTI-TOOL.md §7).
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /**
  * Bring a SQLite database up to the current schema. Idempotent:
@@ -201,7 +201,8 @@ export function applySchema(db: CoreDatabase): void {
       cost_cache_write REAL   NOT NULL,
       cost_unknown    INTEGER NOT NULL,
       timestamp       TEXT    NOT NULL,
-      branch_path     TEXT
+      branch_path     TEXT,
+      source          TEXT    NOT NULL DEFAULT 'pi'
     );
 
     CREATE TABLE IF NOT EXISTS tags (
@@ -275,6 +276,28 @@ export function applySchema(db: CoreDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_subagent_agent    ON subagent_runs(agent);
     CREATE INDEX IF NOT EXISTS idx_tool_calls_feature_name ON tool_calls(feature_id, tool_name);
   `);
+
+  // v3: messages.source — the tool that produced each row.
+  //
+  // Per MULTI-TOOL.md §7: free-form string (no enum), so adding a
+  // new tool is a config change, not a schema change. Defaults to
+  // 'pi' so every pre-step-4 row gets attributed to pi (which is
+  // correct: every existing row came from pi). Idempotent: the
+  // column-existence guard means re-running on a v3+ DB is a no-op.
+  const messageCols = db
+    .prepare(`PRAGMA table_info(messages)`)
+    .all() as Array<{ name: string }>;
+  if (!messageCols.some((c) => c.name === "source")) {
+    db.exec(
+      `ALTER TABLE messages ADD COLUMN source TEXT NOT NULL DEFAULT 'pi'`
+    );
+    // The bySource aggregate the dashboard will show in v1.5+ uses
+    // this index. Cheap to add now (small table, idempotent if we
+    // guard). The IF NOT EXISTS clause handles the re-run case.
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_messages_source ON messages(source)`
+    );
+  }
 
   // Stamp schema version (idempotent).
   db.exec(
@@ -547,7 +570,7 @@ export function exportLedger(): LedgerExport {
         `SELECT id, feature_id, session_id, model, provider,
                 input_tokens, output_tokens, cache_read, cache_write,
                 cost_usd, cost_input, cost_output, cost_cache_read, cost_cache_write,
-                cost_unknown, timestamp, branch_path
+                cost_unknown, timestamp, branch_path, source
          FROM messages ORDER BY feature_id, timestamp`
       )
       .all() as Array<Record<string, unknown>>,
@@ -607,7 +630,7 @@ export function exportLedgerCsv(): string {
         "id", "feature_id", "session_id", "model", "provider", "input_tokens",
         "output_tokens", "cache_read", "cache_write", "cost_usd", "cost_input",
         "cost_output", "cost_cache_read", "cost_cache_write", "cost_unknown",
-        "timestamp", "branch_path",
+        "timestamp", "branch_path", "source",
       ],
       data.messages
     )

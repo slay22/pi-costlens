@@ -165,6 +165,10 @@ export function registerHooks(pi: ExtensionAPI): void {
       // recompute lives in @costlens/core's
       // `recordMessageAndUpdateFeature`. Same transaction, same
       // SQL — just consolidated into the data plane.
+      //
+      // Phase 9 step 4: every row written by pi is tagged with
+      // source = "pi" so the dashboard can show a per-tool
+      // breakdown in v1.5+. See MULTI-TOOL.md §7.
       recordMessageAndUpdateFeature({
         id: messageId,
         feature_id: featureId,
@@ -183,6 +187,7 @@ export function registerHooks(pi: ExtensionAPI): void {
         cost_unknown: costUnknown,
         timestamp: ts,
         branch_path: null,
+        source: "pi",
       });
 
       // Confidence is derived; recompute outside the write transaction
