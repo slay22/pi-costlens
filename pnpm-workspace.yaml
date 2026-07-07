@@ -1,0 +1,9 @@
+packages:
+  - "packages/*"
+
+# pnpm 11 moved "onlyBuiltDependencies" out of package.json. The new
+# home is `allowBuilds` here in pnpm-workspace.yaml. We allow esbuild's
+# postinstall because tsx (the TS loader for `node --import tsx --test`)
+# depends on esbuild's native binary.
+allowBuilds:
+  esbuild: true

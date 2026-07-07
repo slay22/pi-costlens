@@ -49,7 +49,10 @@ import { DEFAULT_PORT, findFreePort } from "./port.js";
 const COSTLENS_HOME = getCostlensHome();
 const DB_PATH = join(COSTLENS_HOME, "ledger.db");
 const STARTED_AT = new Date().toISOString();
-const VERSION = "0.7.0";
+// Keep in sync with packages/pi/package.json#version. The dashboard
+// /api/health response surfaces this so the user can tell which build
+// is running.
+const VERSION = "0.8.0";
 
 // Web assets live in server/web/ alongside this file.
 const WEB_DIR = join(dirname(import.meta.path), "web");

@@ -11,6 +11,5 @@
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "types": ["node", "bun-types"]
-  },
-  "include": ["extension/**/*", "server/**/*", "test/**/*"]
+  }
 }
