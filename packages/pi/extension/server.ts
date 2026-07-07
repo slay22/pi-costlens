@@ -125,7 +125,12 @@ export async function startServer(opts: { detach: boolean }): Promise<ServerHand
   const child = spawn("bun", [scriptPath], {
     env: {
       ...process.env,
-      COSTLENS_HOME: process.env.COSTLENS_HOME ?? join(homedir(), ".pi"),
+      // Phase 9 step 3: pass the parent of the new home. With
+      // `COSTLENS_HOME=~`, the child resolves its costlens dir as
+      // `~/.costlens` (the new path) — the migration runs at the
+      // child's startup and the legacy `~/.pi/costlens/` data is
+      // moved into place if needed.
+      COSTLENS_HOME: process.env.COSTLENS_HOME ?? homedir(),
       COSTLENS_PORT: String(port),
     },
     detached: opts.detach,

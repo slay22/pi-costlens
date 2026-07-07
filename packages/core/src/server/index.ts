@@ -19,6 +19,7 @@ import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { setCoreDb, closeCoreDb, applySchema, COSTLENS_DIR } from "../db.js";
 import { readConfig } from "../config.js";
+import { ensureMigratedFromEnv } from "../migrate.js";
 import { DEFAULT_PORT, findFreePort } from "./port.js";
 import {
   handleFeatures,
@@ -83,6 +84,13 @@ if (REQUESTED_PORT !== preferredPort) {
 // missing, rather than 500-ing on the first request. The server
 // uses bun:sqlite; the extension uses node:sqlite — both cast to
 // core's CoreDatabase type at the boundary.
+//
+// Phase 9 step 3: run the legacy data migration first. If the user
+// is on a fresh install, this is a no-op (creates the new dir). If
+// they have data at `~/.pi/costlens/`, this renames it into place at
+// `~/.costlens/` and writes a flag. Idempotent.
+ensureMigratedFromEnv();
+
 if (!existsSync(DB_PATH)) {
   throw new Error(
     `Costlens DB not found at ${DB_PATH}; has the extension been run yet?`

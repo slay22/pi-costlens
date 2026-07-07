@@ -67,6 +67,7 @@ export {
   getLegacyHome,
   getDbPath,
   ensureCostlensHome,
+  getLegacyDbPath,
   // Reads
   getFeature,
   listFeatures,
@@ -146,6 +147,19 @@ export {
   getConfigPath,
   getDefaultThresholds,
 } from "./config.js";
+
+// ---------------------------------------------------------------------------
+// Migration (pi-costlens → @costlens/core, ~/.pi/costlens → ~/.costlens)
+// ---------------------------------------------------------------------------
+
+export {
+  ensureMigrated,
+  ensureMigratedFromEnv,
+  resolveMigrationPaths,
+  readMigrationFlag,
+  FLAG_FILENAME,
+  type MigrationResult,
+} from "./migrate.js";
 
 // ---------------------------------------------------------------------------
 // Server (Bun dashboard) — exported so the extension's `startServer`

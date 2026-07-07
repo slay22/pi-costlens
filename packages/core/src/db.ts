@@ -121,6 +121,16 @@ export function getDbPath(): string {
 }
 
 /**
+ * Convenience: the legacy DB path (the one used by every pre-
+ * phase-9 user). Surfaces as `LEGACY_DB_DIR + "/ledger.db"`.
+ * Useful in tests + the rare call site that wants to read the
+ * old path explicitly.
+ */
+export function getLegacyDbPath(): string {
+  return join(LEGACY_DB_DIR, "ledger.db");
+}
+
+/**
  * Make sure the directory exists. Called by the extension's `initDb`
  * before opening the DB; the server assumes the extension has run at
  * least once and does not auto-create.
