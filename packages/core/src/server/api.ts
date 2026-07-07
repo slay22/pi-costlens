@@ -22,7 +22,19 @@ import {
   getSubagentSummary,
   getToolCallCounts,
   getTopSubagents,
-} from "./db.js";
+} from "../db.js";
+import {
+  closeFeature,
+  cancelFeature,
+  mergeFeature,
+  reopenFeature,
+  setCap,
+  addTag,
+  removeTag,
+  attachNote,
+  LifecycleError,
+} from "../lifecycle.js";
+import type { Note } from "../types.js";
 
 const JSON_HEADERS = { "content-type": "application/json" };
 
@@ -224,18 +236,6 @@ export function handleTopSubagents(url: URL): Response {
 //   { "error": "lifecycle", "code": "BAD_REQUEST", ... }
 // ---------------------------------------------------------------------------
 
-import {
-  addTag,
-  attachNote,
-  cancelFeature,
-  closeFeature,
-  LifecycleError,
-  mergeFeature,
-  removeTag,
-  reopenFeature,
-  setCap,
-} from "./lifecycle.js";
-
 function lifecycleError(err: LifecycleError): Response {
   const status =
     err.code === "NOT_FOUND" ? 404 :
@@ -376,7 +376,7 @@ export async function handleAttachNote(id: string, req: Request): Promise<Respon
     if (typeof noteBody !== "string") {
       return badRequest("body must be a string.");
     }
-    const note = attachNote(id, noteBody);
+    const note = attachNote(id, noteBody, { strict: true });
     return json(note);
   } catch (err) {
     if (err instanceof LifecycleError) return lifecycleError(err);

@@ -23,7 +23,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { DatabaseSync } from "node:sqlite";
+import type { CoreDatabase } from "@costlens/core";
 import {
   getCurrentFeatureId,
   getFeature,
@@ -52,7 +52,7 @@ import { notify as sendNotify } from "./notifications.js";
 
 export type CommandDeps = {
   getActiveFeatureId: () => string | null;
-  getDb: () => DatabaseSync;
+  getDb: () => CoreDatabase;
   detectGitContext: (cwd: string) => Promise<{ isRepo: boolean; branch: string | null; isMainBranch: boolean }>;
   refreshFooter: (ctx: ExtensionContext) => void;
   /** Phase 6: called after a feature is reopened, so the notifications module can clear its debounce. */

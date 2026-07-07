@@ -46,7 +46,7 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { DatabaseSync } from "node:sqlite";
+import type { CoreDatabase } from "@costlens/core";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readConfig, type CostlensConfig } from "./config.js";
 import { listFeatures, type Feature } from "./lifecycle.js";
@@ -310,7 +310,7 @@ export type Digest = {
  * features whose cost was > `thresholdUsd`. Top 3 features by cost;
  * additional features are summarised as "and N more".
  */
-export function computeDailyDigest(db: DatabaseSync, thresholdUsd: number): Digest {
+export function computeDailyDigest(db: CoreDatabase, thresholdUsd: number): Digest {
   const rows = db
     .prepare(
       `SELECT feature_id, SUM(cost_usd) AS cost, COUNT(*) AS turns

@@ -15,7 +15,11 @@
  */
 
 import { join, dirname } from "node:path";
-import { openDb, closeDb } from "./db.js";
+import { Database } from "bun:sqlite";
+import { existsSync } from "node:fs";
+import { setCoreDb, closeCoreDb, applySchema, COSTLENS_DIR } from "../db.js";
+import { readConfig } from "../config.js";
+import { DEFAULT_PORT, findFreePort } from "./port.js";
 import {
   handleFeatures,
   handleFeature,
@@ -43,10 +47,8 @@ import {
   handleAttachNote,
   type RouteContext,
 } from "./api.js";
-import { getCostlensHome, readConfig } from "./config.js";
-import { DEFAULT_PORT, findFreePort } from "./port.js";
 
-const COSTLENS_HOME = getCostlensHome();
+const COSTLENS_HOME = COSTLENS_DIR;
 const DB_PATH = join(COSTLENS_HOME, "ledger.db");
 const STARTED_AT = new Date().toISOString();
 // Keep in sync with packages/pi/package.json#version. The dashboard
@@ -78,8 +80,19 @@ if (REQUESTED_PORT !== preferredPort) {
 }
 
 // Open the DB up-front so we fail fast with a clear error if it's
-// missing, rather than 500-ing on the first request.
-openDb(DB_PATH);
+// missing, rather than 500-ing on the first request. The server
+// uses bun:sqlite; the extension uses node:sqlite — both cast to
+// core's CoreDatabase type at the boundary.
+if (!existsSync(DB_PATH)) {
+  throw new Error(
+    `Costlens DB not found at ${DB_PATH}; has the extension been run yet?`
+  );
+}
+const db = new Database(DB_PATH);
+db.exec(`PRAGMA journal_mode = WAL;`);
+db.exec(`PRAGMA busy_timeout = 5000;`);
+applySchema(db);
+setCoreDb(db);
 
 const ctx: RouteContext = { startedAt: STARTED_AT, version: VERSION };
 
@@ -227,7 +240,7 @@ console.log(`  pid:        ${process.pid}`);
 const shutdown = (signal: string) => {
   console.log(`\ncostlens-server received ${signal}, shutting down`);
   server.stop();
-  closeDb();
+  closeCoreDb();
   process.exit(0);
 };
 process.on("SIGTERM", () => shutdown("SIGTERM"));

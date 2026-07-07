@@ -243,8 +243,8 @@ function seed() {
 }
 
 // Import once. The singleton is opened in beforeAll.
-const db = await import("../server/db.js");
-const api = await import("../server/api.js");
+const db = await import("../db.js");
+const api = await import("./api.js");
 
 // ---------------------------------------------------------------------------
 // port.ts
@@ -252,13 +252,13 @@ const api = await import("../server/api.js");
 
 describe("port", () => {
   test("PORT_RANGE bounds are correct", async () => {
-    const { PORT_RANGE_START, PORT_RANGE_END } = await import("../server/port.js");
+    const { PORT_RANGE_START, PORT_RANGE_END } = await import("./port.js");
     expect(PORT_RANGE_START).toBe(7331);
     expect(PORT_RANGE_END).toBe(7399);
   });
 
   test("findFreePort returns a port in range", async () => {
-    const { findFreePort } = await import("../server/port.js");
+    const { findFreePort } = await import("./port.js");
     const port = await findFreePort(7331);
     expect(port).not.toBeNull();
     expect(port!).toBeGreaterThanOrEqual(7331);
@@ -267,7 +267,7 @@ describe("port", () => {
 
   test("findFreePort finds the next port when start is taken", async () => {
     const { createServer } = await import("node:net");
-    const { findFreePort } = await import("../server/port.js");
+    const { findFreePort } = await import("./port.js");
     // Bind port 7331 so it's taken. Use a port in the upper half of
     // the range so we don't collide with the running server (if any).
     const blockerPort = 7350;
@@ -282,13 +282,13 @@ describe("port", () => {
   });
 
   test("findFreePort returns null when start is beyond the range", async () => {
-    const { findFreePort } = await import("../server/port.js");
+    const { findFreePort } = await import("./port.js");
     const port = await findFreePort(8000);
     expect(port).toBeNull();
   });
 
   test("findFreePort clamps start below the range", async () => {
-    const { findFreePort, PORT_RANGE_START } = await import("../server/port.js");
+    const { findFreePort, PORT_RANGE_START } = await import("./port.js");
     const port = await findFreePort(100);
     expect(port).toBeGreaterThanOrEqual(PORT_RANGE_START);
   });
@@ -305,26 +305,26 @@ describe("config", () => {
   });
 
   test("returns defaults when no config file", async () => {
-    const { readConfig } = await import("../server/config.js");
+    const { readConfig } = await import("../config.js");
     const cfg = readConfig();
     expect(cfg.port).toBe(7331);
   });
 
   test("round-trips a config object through disk", async () => {
     writeFileSync(CONFIG_PATH, JSON.stringify({ port: 8080 }, null, 2) + "\n");
-    const { readConfig } = await import("../server/config.js");
+    const { readConfig } = await import("../config.js");
     expect(readConfig().port).toBe(8080);
   });
 
   test("falls back to defaults for malformed JSON", async () => {
     writeFileSync(CONFIG_PATH, "{ not valid json");
-    const { readConfig } = await import("../server/config.js");
+    const { readConfig } = await import("../config.js");
     expect(readConfig().port).toBe(7331);
   });
 
   test("falls back to defaults for non-positive port", async () => {
     writeFileSync(CONFIG_PATH, JSON.stringify({ port: -1 }));
-    const { readConfig } = await import("../server/config.js");
+    const { readConfig } = await import("../config.js");
     expect(readConfig().port).toBe(7331);
   });
 });
@@ -336,7 +336,10 @@ describe("config", () => {
 describe("db + api", () => {
   beforeAll(() => {
     seed();
-    db.openDb(DB_PATH);
+    // Phase 9 step 2: open a fresh bun:sqlite connection and
+    // register it with core's singleton. The handlers all read
+    // through `getCoreDb()`.
+    db.setCoreDb(new Database(DB_PATH));
   });
 
   test("getAllFeatures returns rows sorted by last activity desc", () => {
@@ -729,12 +732,12 @@ describe("write endpoints (Phase 7.5)", () => {
   // above interacted with the fixtures. And reset feat/open to
   // 'open' between tests so each test sees a fresh open feature.
   beforeAll(() => {
-    db.closeDb();
+    db.closeCoreDb();
     seed();
-    db.openDb(DB_PATH);
+    db.setCoreDb(new Database(DB_PATH));
   });
   beforeEach(() => {
-    db.getDb().exec(`
+    db.getCoreDb().exec(`
       UPDATE features SET status = 'open', closed_at = NULL WHERE id = 'feat/open';
       UPDATE features SET status = 'done', closed_at = '2026-06-29T10:00:00Z' WHERE id = 'feat/done';
       DELETE FROM tags WHERE feature_id IN ('feat/open', 'feat/done');
@@ -831,7 +834,7 @@ describe("write endpoints (Phase 7.5)", () => {
       // feat/open is now merged from the prior test. Re-seed via
       // reopen is not enough because the seed has been mutated; use
       // a fresh feature by directly mutating the DB.
-      db.getDb().prepare(`UPDATE features SET status = 'open', closed_at = NULL WHERE id = 'feat/open'`).run();
+      db.getCoreDb().prepare(`UPDATE features SET status = 'open', closed_at = NULL WHERE id = 'feat/open'`).run();
       const res = await api.handleMerge("feat/open", makeReq("POST", { note: "to main" }));
       expect(res.status).toBe(200);
       const notes = db.getNotes("feat/open");
@@ -842,7 +845,7 @@ describe("write endpoints (Phase 7.5)", () => {
     test("returns 409 when not open", async () => {
       // Force feat/open into a non-open state for this test (the
       // beforeEach in the parent block resets it to open).
-      db.getDb().prepare(`UPDATE features SET status = 'done', closed_at = ? WHERE id = 'feat/open'`).run("2026-07-01T00:00:00Z");
+      db.getCoreDb().prepare(`UPDATE features SET status = 'done', closed_at = ? WHERE id = 'feat/open'`).run("2026-07-01T00:00:00Z");
       const res = await api.handleMerge("feat/open", makeReq("POST"));
       expect(res.status).toBe(409);
       const body = (await (res as any).json()) as any;
@@ -984,7 +987,7 @@ describe("write endpoints (Phase 7.5)", () => {
 
     test("normalises the tag (case-insensitive match)", async () => {
       // Re-add backend first.
-      db.getDb().prepare(`INSERT OR IGNORE INTO tags (feature_id, tag) VALUES (?, ?)`)
+      db.getCoreDb().prepare(`INSERT OR IGNORE INTO tags (feature_id, tag) VALUES (?, ?)`)
         .run("feat/open", "backend");
       const res = await api.handleRemoveTag("feat/open", "  BACKEND  ");
       expect(res.status).toBe(200);
@@ -1041,7 +1044,7 @@ describe("write endpoints (Phase 7.5)", () => {
 
 afterAll(() => {
   try {
-    db.closeDb();
+    db.closeCoreDb();
     rmSync(TEST_HOME, { recursive: true, force: true });
     delete process.env.COSTLENS_HOME;
   } catch {

@@ -358,7 +358,10 @@ describe("setCap", () => {
     const { setCap, LifecycleError } = await import("../extension/lifecycle.js");
     const f = await openFeature("cap-3");
     assert.throws(() => setCap(f.id, -1), (err: unknown) => {
-      return err instanceof LifecycleError && err.code === "INVALID_STATE";
+      // Phase 9 step 2: the extension and the server now share
+      // the same setCap. The unified code uses `BAD_REQUEST`
+      // (matching the HTTP layer's 400 mapping).
+      return err instanceof LifecycleError && err.code === "BAD_REQUEST";
     });
   });
 });
@@ -510,8 +513,12 @@ describe("addTag / removeTag / listTags / listAllTags", () => {
     const { addTag, removeTag, listTags } = await import("../extension/lifecycle.js");
     const f = await openFeature("tags-4");
     addTag(f.id, "to-go");
-    const removed = removeTag(f.id, "to-go");
-    assert.equal(removed, true);
+    // Phase 9 step 2: removeTag now returns the post-removal tag
+    // list (the server's behaviour; useful for the HTTP layer to
+    // echo back). The extension pre-step-2 returned a boolean.
+    // The user-facing semantics are unchanged: the tag is gone.
+    const remaining = removeTag(f.id, "to-go");
+    assert.deepEqual(remaining, []);
     assert.deepEqual(listTags(f.id), []);
   });
 
@@ -519,16 +526,18 @@ describe("addTag / removeTag / listTags / listAllTags", () => {
     const { addTag, removeTag, listTags } = await import("../extension/lifecycle.js");
     const f = await openFeature("tags-5");
     addTag(f.id, "Backend");
-    const removed = removeTag(f.id, "  BACKEND  ");
-    assert.equal(removed, true);
+    const remaining = removeTag(f.id, "  BACKEND  ");
+    assert.deepEqual(remaining, []);
     assert.deepEqual(listTags(f.id), []);
   });
 
-  test("removing a non-existent tag is a no-op (returns false)", async () => {
-    const { removeTag } = await import("../extension/lifecycle.js");
+  test("removing a non-existent tag is a no-op (returns current list)", async () => {
+    const { addTag, removeTag } = await import("../extension/lifecycle.js");
     const f = await openFeature("tags-6");
-    const removed = removeTag(f.id, "nope");
-    assert.equal(removed, false);
+    addTag(f.id, "exists");
+    // No-op: the tag list is unchanged.
+    const remaining = removeTag(f.id, "nope");
+    assert.deepEqual(remaining, ["exists"]);
   });
 
   test("addTag refuses to tag the unassigned pool", async () => {
@@ -542,7 +551,13 @@ describe("addTag / removeTag / listTags / listAllTags", () => {
     const { addTag, LifecycleError } = await import("../extension/lifecycle.js");
     const f = await openFeature("tags-7");
     assert.throws(() => addTag(f.id, "   "), (err: unknown) => {
-      return err instanceof LifecycleError && err.code === "INVALID_STATE";
+      // Phase 9 step 2: the extension and the server now share
+      // the same addTag. The unified code uses `BAD_REQUEST` (the
+      // more semantically correct code for an input-validation
+      // failure; the HTTP layer maps it to 400). The pre-step-2
+      // extension code used `INVALID_STATE` for this case; that
+      // difference is intentionally normalised.
+      return err instanceof LifecycleError && err.code === "BAD_REQUEST";
     });
   });
 

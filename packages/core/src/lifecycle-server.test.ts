@@ -89,13 +89,13 @@ const SCHEMA = `
 // Setup: open the DB, seed a feature for each test
 // ---------------------------------------------------------------------------
 
-const db = await import("../server/db.js");
-const lc = await import("../server/lifecycle.js");
+const db = await import("./db.js");
+const lc = await import("./lifecycle.js");
 type LifecycleError = InstanceType<typeof lc.LifecycleError>;
 
 function seedOpenFeature(id: string) {
   const now = new Date().toISOString();
-  db.getDb()
+  db.getCoreDb()
     .prepare(
       `INSERT INTO features
          (id, name, branch, status, pricing_conf, started_at,
@@ -108,7 +108,7 @@ function seedOpenFeature(id: string) {
 function seedFeature(id: string, status: "open" | "done" | "abandoned" | "merged") {
   const now = new Date().toISOString();
   const closed = status === "open" ? null : now;
-  db.getDb()
+  db.getCoreDb()
     .prepare(
       `INSERT INTO features
          (id, name, branch, status, closed_at, pricing_conf, started_at,
@@ -124,17 +124,19 @@ beforeAll(() => {
   const fresh = new Database(DB_PATH);
   fresh.exec(SCHEMA);
   fresh.close();
-  db.openDb(DB_PATH);
+  // Phase 9 step 2: the lifecycle functions read from `getCoreDb()`.
+  // Wire a fresh bun:sqlite connection into the singleton.
+  db.setCoreDb(new Database(DB_PATH));
 });
 
 beforeEach(() => {
   // Wipe features/tags/notes between tests so each starts clean.
-  db.getDb().exec(`DELETE FROM notes; DELETE FROM tags; DELETE FROM features;`);
+  db.getCoreDb().exec(`DELETE FROM notes; DELETE FROM tags; DELETE FROM features;`);
 });
 
 afterAll(() => {
   try {
-    db.closeDb();
+    db.closeCoreDb();
     rmSync(TEST_HOME, { recursive: true, force: true });
     delete process.env.COSTLENS_HOME;
   } catch {
@@ -436,7 +438,7 @@ describe("addTag", () => {
     lc.addTag("feat/tags-2", "backend");
     lc.addTag("feat/tags-2", "BACKEND");
     expect(lc.listTags("feat/tags-2")).toEqual(["backend"]);
-    const row = db.getDb()
+    const row = db.getCoreDb()
       .prepare(`SELECT COUNT(*) AS c FROM tags WHERE feature_id = ? AND tag = ?`)
       .get("feat/tags-2", "backend") as { c: number };
     expect(row.c).toBe(1);
@@ -529,9 +531,11 @@ describe("attachNote", () => {
   test("inserts a note and returns the new row (id, body, created_at)", () => {
     seedOpenFeature("feat/note-1");
     const note = lc.attachNote("feat/note-1", "a standalone note");
-    expect(note.id).toBeGreaterThan(0);
-    expect(note.body).toBe("a standalone note");
-    expect(note.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    // The body is non-empty, so attachNote returns the row (not null).
+    expect(note).not.toBeNull();
+    expect(note!.id).toBeGreaterThan(0);
+    expect(note!.body).toBe("a standalone note");
+    expect(note!.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     const fromDb = db.getNotes("feat/note-1");
     expect(fromDb.length).toBe(1);
     expect(fromDb[0].body).toBe("a standalone note");
@@ -539,9 +543,13 @@ describe("attachNote", () => {
 
   test("rejects empty body with BAD_REQUEST", () => {
     seedOpenFeature("feat/note-2");
-    expect(() => lc.attachNote("feat/note-2", "")).toThrow(lc.LifecycleError);
+    // Phase 9 step 2: the unified `attachNote` only throws on
+    // empty / whitespace-only bodies when `{ strict: true }` is
+    // passed. The extension's pre-step-2 silent-drop behaviour is
+    // the default; the server's strict behaviour is opt-in.
+    expect(() => lc.attachNote("feat/note-2", "", { strict: true })).toThrow(lc.LifecycleError);
     try {
-      lc.attachNote("feat/note-2", "");
+      lc.attachNote("feat/note-2", "", { strict: true });
     } catch (err) {
       expect((err as LifecycleError).code).toBe("BAD_REQUEST");
     }
@@ -549,9 +557,9 @@ describe("attachNote", () => {
 
   test("rejects whitespace-only body with BAD_REQUEST", () => {
     seedOpenFeature("feat/note-3");
-    expect(() => lc.attachNote("feat/note-3", "   \n  ")).toThrow(lc.LifecycleError);
+    expect(() => lc.attachNote("feat/note-3", "   \n  ", { strict: true })).toThrow(lc.LifecycleError);
     try {
-      lc.attachNote("feat/note-3", "   \n  ");
+      lc.attachNote("feat/note-3", "   \n  ", { strict: true });
     } catch (err) {
       expect((err as LifecycleError).code).toBe("BAD_REQUEST");
     }

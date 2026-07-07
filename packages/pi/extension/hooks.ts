@@ -32,6 +32,7 @@ import {
   insertSubagentRun,
   insertToolCall,
   updateFeatureSubagentCost,
+  recordMessageAndUpdateFeature,
 } from "./lifecycle.js";
 import { fireThresholdNotification } from "./notifications.js";
 
@@ -160,66 +161,29 @@ export function registerHooks(pi: ExtensionAPI): void {
       const sessionFile = ctx.sessionManager.getSessionFile() ?? "ephemeral";
       const ts = new Date(msg.timestamp).toISOString();
 
-      const insertMessage = db.prepare(`
-        INSERT OR REPLACE INTO messages (
-          id, feature_id, session_id, model, provider,
-          input_tokens, output_tokens, cache_read, cache_write,
-          cost_usd, cost_input, cost_output, cost_cache_read, cost_cache_write,
-          cost_unknown, timestamp, branch_path
-        ) VALUES (
-          @id, @feature_id, @session_id, @model, @provider,
-          @input_tokens, @output_tokens, @cache_read, @cache_write,
-          @cost_usd, @cost_input, @cost_output, @cost_cache_read, @cost_cache_write,
-          @cost_unknown, @timestamp, @branch_path
-        )
-      `);
-
-      const updateFeatureTotals = db.prepare(`
-        UPDATE features
-        SET
-          total_cost_usd    = COALESCE((SELECT SUM(cost_usd)        FROM messages WHERE feature_id = @fid), 0),
-          total_input       = COALESCE((SELECT SUM(input_tokens)    FROM messages WHERE feature_id = @fid), 0),
-          total_output      = COALESCE((SELECT SUM(output_tokens)   FROM messages WHERE feature_id = @fid), 0),
-          total_cache_read  = COALESCE((SELECT SUM(cache_read)      FROM messages WHERE feature_id = @fid), 0),
-          total_cache_write = COALESCE((SELECT SUM(cache_write)     FROM messages WHERE feature_id = @fid), 0),
-          turn_count        = COALESCE((SELECT COUNT(*)             FROM messages WHERE feature_id = @fid), 0),
-          first_activity_at = COALESCE(first_activity_at, @ts),
-          last_activity_at  = @ts
-        WHERE id = @fid
-      `);
-
-      // node:sqlite has no `db.transaction()` helper — wrap manually.
-      db.exec("BEGIN");
-      try {
-        insertMessage.run({
-          id: messageId,
-          feature_id: featureId,
-          session_id: sessionFile,
-          model: msg.model,
-          provider: msg.provider,
-          input_tokens: usage.input,
-          output_tokens: usage.output,
-          cache_read: usage.cacheRead,
-          cache_write: usage.cacheWrite,
-          cost_usd: cost.total,
-          cost_input: cost.input,
-          cost_output: cost.output,
-          cost_cache_read: cost.cacheRead,
-          cost_cache_write: cost.cacheWrite,
-          cost_unknown: costUnknown,
-          timestamp: ts,
-          branch_path: null,
-        });
-        updateFeatureTotals.run({ fid: featureId, ts });
-        db.exec("COMMIT");
-      } catch (err) {
-        try {
-          db.exec("ROLLBACK");
-        } catch {
-          // best-effort; surface original error
-        }
-        throw err;
-      }
+      // Phase 9 step 2: the message-insert + feature-totals
+      // recompute lives in @costlens/core's
+      // `recordMessageAndUpdateFeature`. Same transaction, same
+      // SQL — just consolidated into the data plane.
+      recordMessageAndUpdateFeature({
+        id: messageId,
+        feature_id: featureId,
+        session_id: sessionFile,
+        model: msg.model,
+        provider: msg.provider,
+        input_tokens: usage.input,
+        output_tokens: usage.output,
+        cache_read: usage.cacheRead,
+        cache_write: usage.cacheWrite,
+        cost_usd: cost.total,
+        cost_input: cost.input,
+        cost_output: cost.output,
+        cost_cache_read: cost.cacheRead,
+        cost_cache_write: cost.cacheWrite,
+        cost_unknown: costUnknown,
+        timestamp: ts,
+        branch_path: null,
+      });
 
       // Confidence is derived; recompute outside the write transaction
       // (it's a small read, doesn't need to block the write).

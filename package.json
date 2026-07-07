@@ -10,7 +10,7 @@
   },
   "scripts": {
     "test": "pnpm -r test",
-    "test:server": "pnpm --filter pi-costlens test:server",
+    "test:server": "pnpm --filter @costlens/core test:server",
     "typecheck": "pnpm -r typecheck",
     "build": "pnpm -r build",
     "clean": "pnpm -r clean"

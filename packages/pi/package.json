@@ -25,9 +25,9 @@
     "dashboard"
   ],
   "scripts": {
-    "test": "node --import tsx --test test/extension.test.ts test/footer.test.ts test/lifecycle.test.ts test/notifications.test.ts",
-    "test:watch": "node --import tsx --test --watch test/extension.test.ts test/footer.test.ts test/lifecycle.test.ts test/notifications.test.ts",
-    "test:server": "bun test test/server.test.ts test/lifecycle-server.test.ts",
+    "test": "node --import tsx --test test/extension.test.ts test/footer.test.ts test/lifecycle.test.ts test/notifications.test.ts test/hooks-subagent.test.ts",
+    "test:watch": "node --import tsx --test --watch test/extension.test.ts test/footer.test.ts test/lifecycle.test.ts test/notifications.test.ts test/hooks-subagent.test.ts",
+    "test:server": "echo \"server tests moved to @costlens/core (run `pnpm --filter @costlens/core test:server`)\" && pnpm --filter @costlens/core test:server",
     "test:all": "npm test && npm run test:server",
     "typecheck": "tsc --noEmit",
     "build": "echo \"pi-costlens: no build (TypeScript-only, loaded via jiti)\"",
@@ -51,7 +51,6 @@
     ]
   },
   "files": [
-    "extension",
-    "server"
+    "extension"
   ]
 }

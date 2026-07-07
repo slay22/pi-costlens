@@ -19,12 +19,19 @@ import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import { getCostlensHome, readConfig } from "./config.js";
-import { findFreePort } from "../server/port.js";
+import { readConfig, getConfigPath } from "./config.js";
+import { findFreePort } from "@costlens/core";
+
+// `getCostlensHome` is no longer exported from ./config.js
+// (step 2 moved it to @costlens/core's db module). The PID file
+// lives at the legacy `~/.pi/costlens/` path until step 3 migrates
+// it. Compute it from the config file path to avoid a circular
+// re-export through the config shim.
+import { dirname as _dirname } from "node:path";
+const COSTLENS_HOME = _dirname(getConfigPath());
+const SERVER_PID_PATH = join(COSTLENS_HOME, "server.pid");
 
 const execFileAsync = promisify(execFile);
-
-const SERVER_PID_PATH = join(getCostlensHome(), "server.pid");
 
 let _child: ChildProcess | null = null;
 let _handle: ServerHandle | null = null;
@@ -59,12 +66,23 @@ async function waitForHealth(port: number, timeoutMs = 5000): Promise<boolean> {
   return false;
 }
 
-/** Resolve the path to `server/index.ts` relative to this module. */
+/**
+ * Resolve the path to the dashboard server entry point.
+ *
+ * Phase 9 step 2: the server moved from
+ * `packages/pi/server/index.ts` to `packages/core/src/server/index.ts`.
+ * The path layout is now:
+ *
+ *   extension/server.ts    -> packages/pi/extension/server.ts
+ *   core/src/server/index.ts  -> packages/core/src/server/index.ts
+ *
+ * So from `packages/pi/extension/server.ts`, the relative path is
+ * `../../core/src/server/index.ts`. We resolve via `import.meta.url`
+ * so jiti's loader doesn't hard-code a path.
+ */
 function serverScriptPath(): string {
-  // extension/server.ts -> ../server/index.ts
-  // import.meta.url is the URL of this module.
   const here = dirname(fileURLToPath(import.meta.url));
-  return join(here, "..", "server", "index.ts");
+  return join(here, "..", "..", "core", "src", "server", "index.ts");
 }
 
 export async function startServer(opts: { detach: boolean }): Promise<ServerHandle> {
@@ -140,7 +158,7 @@ export async function startServer(opts: { detach: boolean }): Promise<ServerHand
   _handle = handle;
 
   if (opts.detach) {
-    mkdirSync(getCostlensHome(), { recursive: true });
+    mkdirSync(COSTLENS_HOME, { recursive: true });
     writeFileSync(SERVER_PID_PATH, String(child.pid));
     child.unref();
   }
