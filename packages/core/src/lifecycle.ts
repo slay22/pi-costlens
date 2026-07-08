@@ -620,32 +620,38 @@ export function recordMessageAndUpdateFeature(m: MessageInsert): void {
   const db = getCoreDb();
   db.exec("BEGIN");
   try {
+    // Use positional ? params for cross-driver compatibility.
+    // node:sqlite supports @name; bun:sqlite uses $name but requires
+    // the $ prefix in the object key. Positional ? works in both.
     db.prepare(
       `INSERT OR REPLACE INTO messages (
          id, feature_id, session_id, model, provider,
          input_tokens, output_tokens, cache_read, cache_write,
          cost_usd, cost_input, cost_output, cost_cache_read, cost_cache_write,
          cost_unknown, timestamp, branch_path, source
-       ) VALUES (
-         @id, @feature_id, @session_id, @model, @provider,
-         @input_tokens, @output_tokens, @cache_read, @cache_write,
-         @cost_usd, @cost_input, @cost_output, @cost_cache_read, @cost_cache_write,
-         @cost_unknown, @timestamp, @branch_path, @source
-       )`
-    ).run(m);
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      m.id, m.feature_id, m.session_id, m.model, m.provider,
+      m.input_tokens, m.output_tokens, m.cache_read, m.cache_write,
+      m.cost_usd, m.cost_input, m.cost_output, m.cost_cache_read, m.cost_cache_write,
+      m.cost_unknown, m.timestamp, m.branch_path, m.source
+    );
     db.prepare(
       `UPDATE features
        SET
-         total_cost_usd    = COALESCE((SELECT SUM(cost_usd)        FROM messages WHERE feature_id = @fid), 0),
-         total_input       = COALESCE((SELECT SUM(input_tokens)    FROM messages WHERE feature_id = @fid), 0),
-         total_output      = COALESCE((SELECT SUM(output_tokens)   FROM messages WHERE feature_id = @fid), 0),
-         total_cache_read  = COALESCE((SELECT SUM(cache_read)      FROM messages WHERE feature_id = @fid), 0),
-         total_cache_write = COALESCE((SELECT SUM(cache_write)     FROM messages WHERE feature_id = @fid), 0),
-         turn_count        = COALESCE((SELECT COUNT(*)             FROM messages WHERE feature_id = @fid), 0),
-         first_activity_at = COALESCE(first_activity_at, @ts),
-         last_activity_at  = @ts
-       WHERE id = @fid`
-    ).run({ fid: m.feature_id, ts: m.timestamp });
+         total_cost_usd    = COALESCE((SELECT SUM(cost_usd)        FROM messages WHERE feature_id = ?), 0),
+         total_input       = COALESCE((SELECT SUM(input_tokens)    FROM messages WHERE feature_id = ?), 0),
+         total_output      = COALESCE((SELECT SUM(output_tokens)   FROM messages WHERE feature_id = ?), 0),
+         total_cache_read  = COALESCE((SELECT SUM(cache_read)      FROM messages WHERE feature_id = ?), 0),
+         total_cache_write = COALESCE((SELECT SUM(cache_write)     FROM messages WHERE feature_id = ?), 0),
+         turn_count        = COALESCE((SELECT COUNT(*)             FROM messages WHERE feature_id = ?), 0),
+         first_activity_at = COALESCE(first_activity_at, ?),
+         last_activity_at  = ?
+       WHERE id = ?`
+    ).run(
+      m.feature_id, m.feature_id, m.feature_id, m.feature_id, m.feature_id, m.feature_id,
+      m.timestamp, m.timestamp, m.feature_id
+    );
     db.exec("COMMIT");
   } catch (err) {
     try {
