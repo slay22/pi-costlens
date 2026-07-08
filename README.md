@@ -2,12 +2,12 @@
 
 A pi extension that books the real dollar cost of every assistant message to a **feature** (a git branch you're working on), with a local web dashboard for stats — and the command surface to tag, search, note, export, and be **notified** when you cross a cap.
 
-> **Status: Phase 6 (notifications) — shipped.** Native OS notifications on cap hits, daily digest, optional webhook. See [PHASE6.md](./PHASE6.md) for the latest phase plan and [PLAN.md](./PLAN.md) for the overall roadmap.
+> **Status: 2.0.0 (multi-tool refactor) — shipped.** The data plane is now in `@costlens/core`; this package is a thin pi adapter. See [MULTI-TOOL.md](./MULTI-TOOL.md) for the multi-tool plan and [CHANGELOG.md](./CHANGELOG.md) for the 2.0.0 release notes. Pre-2.0.0 users upgrade in place; their data is migrated lazily from `~/.pi/costlens/` to `~/.costlens/` on first read.
 
 ## What it does
 
 - Registers as a pi extension
-- On every assistant message, writes the token usage + dollar cost to `~/.pi/costlens/ledger.db` (SQLite, WAL mode)
+- On every assistant message, writes the token usage + dollar cost to `~/.costlens/ledger.db` (SQLite, WAL mode). Pre-2.0.0 data at `~/.pi/costlens/` is migrated lazily on first read.
 - Groups costs by feature (= git branch; `main` / `master` / `develop` / `dev` / detached HEAD / no-git go to an `unassigned` pool)
 - On a fresh branch, prompts once: "Start a feature for `branch`? [Y/n]"
 - Closes / cancels / merges preserve the cost; reopen via `/feature reopen`
@@ -23,31 +23,52 @@ A pi extension that books the real dollar cost of every assistant message to a *
 - **Optional webhook** (Slack/Discord incoming webhook, or any HTTP POST) on threshold crossings
 - **Daily digest** at session_start: one-line summary of yesterday's spend above a configurable USD threshold
 
-## Install (dev)
+## Install
 
-Costlens is a pi extension. For development, point pi at the local extension folder.
+`pi-costlens` ships as a single npm package. Pin a version in your
+pi settings and you're done; the bundled `@costlens/core` carries
+the data plane + dashboard server.
 
-### Option A — symlink (recommended for dev)
-
-```bash
-cd ~/Develop/costlens
-npm install
-ln -s ~/Develop/costlens/extension ~/.pi/agent/extensions/costlens
-```
-
-Then restart pi, or run `/reload` inside pi to hot-reload extensions.
-
-### Option B — settings.json entry
+### From npm (production)
 
 Add to `~/.pi/agent/settings.json`:
 
 ```json
 {
-  "extensions": ["/Users/leo.gutierrez/Develop/costlens/extension"]
+  "extensions": ["pi-costlens"]
 }
 ```
 
-> Note: this loads via the `--extension` style — full hot-reload only works with Option A (auto-discovered location).
+That's it. pi resolves the package, the extension's `index.ts` is
+loaded via jiti, and the first `session_start` opens (or migrates)
+your `~/.costlens/` ledger.
+
+### From the monorepo (development)
+
+```bash
+cd ~/Develop/costlens
+pnpm install
+pnpm --filter pi-costlens link --global
+ln -s "$(pnpm --filter pi-costlens root)/extension" ~/.pi/agent/extensions/costlens
+```
+
+Then restart pi, or run `/reload` inside pi to hot-reload
+extensions.
+
+### From a local checkout (without publishing)
+
+```bash
+cd ~/Develop/costlens
+pnpm install
+# Add to ~/.pi/agent/settings.json:
+#   "extensions": ["/Users/leo.gutierrez/Develop/costlens/packages/pi"]
+```
+
+The `packages/pi/package.json` declares the `pi` field with the
+extension entry, so jiti loads `packages/pi/extension/index.ts`
+directly. The `@costlens/core` workspace dep is resolved by pnpm
+through `node_modules/@costlens/core` (a symlink to
+`packages/core`).
 
 The dashboard server is a separate Bun process; it spawns on demand via `/feature dashboard`. Bun must be on `PATH`.
 

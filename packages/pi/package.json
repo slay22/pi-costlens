@@ -1,10 +1,10 @@
 {
   "name": "pi-costlens",
-  "version": "0.8.0",
+  "version": "2.0.0",
   "description": "A pi extension that books the real dollar cost of every assistant message to a feature (git branch), with a local web dashboard, sub-agent cost attribution, native OS notifications, and a search/note/tag/merge lifecycle.",
   "type": "module",
   "license": "MIT",
-  "private": true,
+  "private": false,
   "author": "Leo Gutierrez <slay22@users.noreply.github.com>",
   "repository": {
     "type": "git",
@@ -31,13 +31,15 @@
     "test:all": "npm test && npm run test:server",
     "typecheck": "tsc --noEmit",
     "build": "echo \"pi-costlens: no build (TypeScript-only, loaded via jiti)\"",
-    "clean": "rm -rf node_modules .tsbuildinfo"
+    "clean": "rm -rf node_modules .tsbuildinfo",
+    "prepack": "node ./scripts/prepack.mjs",
+    "postpack": "rm -f README.md LICENSE CHANGELOG.md"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
   },
   "dependencies": {
-    "@costlens/core": "workspace:*"
+    "@costlens/core": "workspace:^"
   },
   "devDependencies": {
     "@types/node": "^22.7.0",
@@ -51,6 +53,9 @@
     ]
   },
   "files": [
-    "extension"
+    "extension",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
   ]
 }

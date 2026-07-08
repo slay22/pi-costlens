@@ -1,6 +1,6 @@
 {
   "name": "@costlens/core",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Tool-agnostic cost layer. SQLite schema, lifecycle (close/cancel/merge/reopen/cap/tags/notes), search/export, dashboard server. Used by every tool adapter (pi, opencode, claude-code). Step 2 of MULTI-TOOL.md will extract the data plane from pi-costlens into this package.",
   "type": "module",

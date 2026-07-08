@@ -39,7 +39,7 @@ importers:
   packages/pi:
     dependencies:
       '@costlens/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../core
       '@earendil-works/pi-coding-agent':
         specifier: '*'
