@@ -32,6 +32,7 @@ import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readConfig } from "@costlens/core";
+import { maybeShowDailyDigestOcTui } from "./notifications.js";
 
 // ---------------------------------------------------------------------------
 // Minimal TUI type stubs
@@ -165,8 +166,13 @@ export const CostlensTui: TuiPlugin = (api) => {
     // we show the active session cost and let the dashboard provide
     // the full feature breakdown.
   });
+  // v1.5: daily digest on session start via TUI channels.
+  const offCreated = api.event.on("session.created", () => {
+    maybeShowDailyDigestOcTui(api as unknown as Parameters<typeof maybeShowDailyDigestOcTui>[0]);
+  });
   api.lifecycle.onDispose(() => {
     off();
+    offCreated();
     if (_serverChild) { _serverChild.kill(); _serverChild = null; }
   });
 

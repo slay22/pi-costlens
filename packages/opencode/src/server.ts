@@ -24,12 +24,14 @@
 
 import { initDb, closeDb } from "./db.js";
 import { detectGitContext } from "./git.js";
+import { fireThresholdNotificationOc, maybeShowDailyDigestOc } from "./notifications.js";
 import {
   ensureFeatureForSession,
   setActiveFeature,
   getSessionFeatureId,
   recordMessageAndUpdateFeature,
   computePricingConfidence,
+  getFeature,
   getCoreDb,
 } from "@costlens/core";
 
@@ -127,6 +129,8 @@ export const Costlens: Plugin = async (input) => {
             async () => true // auto-create for opencode v1.0
           );
           setActiveFeature(featureId, git);
+          // v1.5: daily digest native OS notification on session start.
+          maybeShowDailyDigestOc();
           break;
         }
 
@@ -191,6 +195,12 @@ export const Costlens: Plugin = async (input) => {
           const db = getCoreDb();
           const conf = computePricingConfidence(db, featureId);
           db.prepare(`UPDATE features SET pricing_conf = ? WHERE id = ?`).run(conf, featureId);
+
+          // v1.5: check cap thresholds and fire native OS notification.
+          const updated = getFeature(featureId);
+          if (updated && updated.cap_usd != null && updated.cap_usd > 0) {
+            fireThresholdNotificationOc(updated, updated.total_cost_usd, updated.cap_usd);
+          }
           break;
         }
 

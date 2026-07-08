@@ -149,6 +149,27 @@ export {
 } from "./config.js";
 
 // ---------------------------------------------------------------------------
+// Notifications (tool-agnostic: OS native, webhook, digest, threshold)
+// ---------------------------------------------------------------------------
+
+export {
+  sendNative,
+  postWebhook,
+  computeDailyDigest,
+  utcYesterdayDate,
+  checkThresholdsAndFire,
+  seedFiredFromCurrentCosts,
+  clearFiredForFeature,
+  _resetFiredForTest,
+  levelForThreshold,
+  emojiForLevel,
+  appleScriptQuote,
+  type Level,
+  type Digest,
+  type ThresholdFiring,
+} from "./notifications.js";
+
+// ---------------------------------------------------------------------------
 // Migration (pi-costlens → @costlens/core, ~/.pi/costlens → ~/.costlens)
 // ---------------------------------------------------------------------------
 
