@@ -35,6 +35,8 @@ import {
   LifecycleError,
 } from "../lifecycle.js";
 import type { Note } from "../types.js";
+import { readMigrationFlag } from "../migrate.js";
+import { COSTLENS_DIR } from "../db.js";
 
 const JSON_HEADERS = { "content-type": "application/json" };
 
@@ -67,12 +69,19 @@ export type RouteContext = {
 // Handlers
 // ---------------------------------------------------------------------------
 
-export function handleHealth(ctx: RouteContext, port: number) {
+export async function handleHealth(ctx: RouteContext, port: number): Promise<Response> {
+  // Phase 9 step 5: surface the migration flag (if any) so the
+  // dashboard can show a one-time "Welcome to v2" banner. The
+  // flag is read fresh on every health check, so a user who
+  // dismisses the banner doesn't see it again on the next reload
+  // — the dismissal is stored in localStorage on the client.
+  const flag = readMigrationFlag(COSTLENS_DIR);
   return json({
     ok: true,
     version: ctx.version,
     startedAt: ctx.startedAt,
     port,
+    welcome: flag,
   });
 }
 

@@ -16,6 +16,14 @@
     <button id="refresh" type="button">↻ Refresh</button>
   </header>
 
+  <!-- Phase 9 step 5: one-time welcome banner after the v2
+       migration. Hidden by default; feature.js wires it up. -->
+  <div id="welcome-banner" class="welcome-banner" hidden role="status">
+    <span class="welcome-icon" aria-hidden="true">✨</span>
+    <span class="welcome-text" id="welcome-text"></span>
+    <button type="button" class="welcome-dismiss" id="welcome-dismiss">Dismiss</button>
+  </div>
+
   <main>
     <section id="summary" class="card">
       <div class="stat">

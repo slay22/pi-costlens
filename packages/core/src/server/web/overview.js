@@ -334,6 +334,68 @@ function escape(s) {
   })[c]);
 }
 
+// ---- welcome banner (Phase 9 step 5) ----
+//
+// On first page load, check /api/health for the migration flag.
+// If present AND the user hasn't dismissed the banner in this
+// browser, show it. The dismissal is stored in localStorage so
+// the banner is one-shot per browser (matches MULTI-TOOL.md §6:
+// "Shown once, dismissable"). Network errors here are silent —
+// the dashboard should still work if /api/health is down.
+
+const WELCOME_DISMISS_KEY = "costlens.v2.welcome.dismissed";
+
+async function maybeShowWelcome() {
+  const banner = document.getElementById("welcome-banner");
+  if (!banner) return;
+  // Already dismissed in this browser? Skip the fetch entirely.
+  if (localStorage.getItem(WELCOME_DISMISS_KEY)) return;
+
+  let res;
+  try {
+    res = await fetch("/api/health");
+  } catch {
+    return; // network error — silent
+  }
+  if (!res.ok) return;
+  let body;
+  try {
+    body = await res.json();
+  } catch {
+    return;
+  }
+  const flag = body && body.welcome;
+  if (!flag || typeof flag.from !== "string") return;
+
+  const text = document.getElementById("welcome-text");
+  if (text) {
+    // The text per MULTI-TOOL.md §6: "Welcome to v2 — your data
+    // was migrated from ~/.pi/costlens/." The `from` field is
+    // always "pi-costlens"; the actual legacy path is the user's
+    // default home (the migration only runs when COSTLENS_HOME is
+    // unset, per §6). The dashboard pins the standard text; users
+    // who set COSTLENS_HOME don't see this banner at all.
+    text.innerHTML =
+      'Welcome to v2 — your data was migrated from <code>~/.pi/costlens/</code> ' +
+      `on <code>${escape(flag.at)}</code>.`;
+  }
+  banner.hidden = false;
+
+  const dismiss = document.getElementById("welcome-dismiss");
+  if (dismiss) {
+    dismiss.addEventListener("click", () => {
+      try {
+        localStorage.setItem(WELCOME_DISMISS_KEY, "1");
+      } catch {
+        // localStorage blocked (private mode, etc.) — still hide
+        // the banner for this session.
+      }
+      banner.hidden = true;
+    });
+  }
+}
+
 $("#refresh").addEventListener("click", load);
 $("#search").addEventListener("input", applyFilter);
 load();
+maybeShowWelcome();

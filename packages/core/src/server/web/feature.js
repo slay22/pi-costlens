@@ -764,6 +764,59 @@ function tagClass(tag) {
 }
 
 // ---------------------------------------------------------------------------
+// Welcome banner (Phase 9 step 5)
+//
+// Same logic as overview.js: check /api/health for the migration
+// flag, show the banner if the user hasn't dismissed it. The
+// localStorage key is shared between pages so dismissing on the
+// overview hides it on the feature page too, and vice versa.
+// ---------------------------------------------------------------------------
+
+const WELCOME_DISMISS_KEY = "costlens.v2.welcome.dismissed";
+
+async function maybeShowWelcome() {
+  const banner = document.getElementById("welcome-banner");
+  if (!banner) return;
+  if (localStorage.getItem(WELCOME_DISMISS_KEY)) return;
+
+  let res;
+  try {
+    res = await fetch("/api/health");
+  } catch {
+    return;
+  }
+  if (!res.ok) return;
+  let body;
+  try {
+    body = await res.json();
+  } catch {
+    return;
+  }
+  const flag = body && body.welcome;
+  if (!flag || typeof flag.from !== "string") return;
+
+  const text = document.getElementById("welcome-text");
+  if (text) {
+    text.innerHTML =
+      'Welcome to v2 — your data was migrated from <code>~/.pi/costlens/</code> ' +
+      `on <code>${escape(flag.at)}</code>.`;
+  }
+  banner.hidden = false;
+
+  const dismiss = document.getElementById("welcome-dismiss");
+  if (dismiss) {
+    dismiss.addEventListener("click", () => {
+      try {
+        localStorage.setItem(WELCOME_DISMISS_KEY, "1");
+      } catch {
+        // localStorage blocked — still hide for this session.
+      }
+      banner.hidden = true;
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Wire up
 // ---------------------------------------------------------------------------
 
@@ -785,3 +838,4 @@ $("#note-input").addEventListener("keydown", (e) => {
 
 load();
 setInterval(load, 5000);
+maybeShowWelcome();

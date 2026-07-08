@@ -417,14 +417,44 @@ describe("db + api", () => {
     expect(o.byStatus.unassigned).toBe(1);
   });
 
-  test("handleHealth returns ok + version + startedAt + port", async () => {
-    const res = api.handleHealth({ startedAt: "X", version: "v1" }, 8080);
+  test("handleHealth returns ok + version + startedAt + port + welcome", async () => {
+    // Phase 9 step 5: handleHealth is async now (it reads the
+    // migration flag). Awaiting it gives us a Response.
+    const res = await api.handleHealth({ startedAt: "X", version: "v1" }, 8080);
     expect(res.status).toBe(200);
     const body = (await (res as any).json()) as any;
     expect(body.ok).toBe(true);
     expect(body.version).toBe("v1");
     expect(body.startedAt).toBe("X");
     expect(body.port).toBe(8080);
+    // The welcome field is null when no migration flag exists
+    // (the test fixture's COSTLENS_HOME has no .migrated-from-pi).
+    expect(body.welcome).toBeNull();
+  });
+
+  test("handleHealth surfaces the migration flag as welcome when present", async () => {
+    // Write a flag into the test's COSTLENS_HOME, hit /api/health,
+    // confirm the welcome field is populated, then clean up.
+    const { COSTLENS_DIR } = await import("../db.js");
+    const { FLAG_FILENAME } = await import("../migrate.js");
+    const flagPath = `${COSTLENS_DIR}/${FLAG_FILENAME}`;
+    const { mkdirSync, writeFileSync, existsSync, unlinkSync } = await import("node:fs");
+    const created = !existsSync(flagPath);
+    if (created) mkdirSync(COSTLENS_DIR, { recursive: true });
+    writeFileSync(
+      flagPath,
+      JSON.stringify({ from: "pi-costlens", at: "2026-07-01T00:00:00.000Z" }, null, 2) + "\n"
+    );
+    try {
+      const res = await api.handleHealth({ startedAt: "X", version: "v1" }, 8080);
+      const body = (await (res as any).json()) as any;
+      expect(body.welcome).toEqual({
+        from: "pi-costlens",
+        at: "2026-07-01T00:00:00.000Z",
+      });
+    } finally {
+      if (created && existsSync(flagPath)) unlinkSync(flagPath);
+    }
   });
 
   test("handleOverview returns the overview object", async () => {

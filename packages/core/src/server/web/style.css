@@ -419,6 +419,62 @@ footer {
   padding: 24px;
 }
 
+/* ---------------------------------------------------------------------------
+   Welcome banner (Phase 9 step 5)
+   ---------------------------------------------------------------------------
+   A one-time notice shown after the v2 migration. Reads from
+   /api/health's `welcome` field; the user dismisses it, the
+   dismissal is stored in localStorage, and we never show it again
+   on subsequent reloads. The banner sits at the top of the page
+   (just under the sticky header) and slides up into view.
+*/
+.welcome-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 24px;
+  background: var(--accent-soft, rgba(93, 211, 158, 0.12));
+  border-bottom: 1px solid var(--accent);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.4;
+  animation: welcome-in 0.22s ease-out;
+}
+.welcome-banner[hidden] { display: none; }
+.welcome-banner .welcome-icon {
+  flex-shrink: 0;
+  font-size: 16px;
+}
+.welcome-banner .welcome-text {
+  flex: 1;
+  word-break: break-word;
+}
+.welcome-banner code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  padding: 1px 5px;
+  background: var(--surface-2);
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+.welcome-banner .welcome-dismiss {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.welcome-banner .welcome-dismiss:hover {
+  background: var(--surface-2);
+}
+@keyframes welcome-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 /* tags list section spacing */
 #tags-card .tag-list { margin-top: 4px; }
 
