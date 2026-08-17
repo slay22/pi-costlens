@@ -11,6 +11,23 @@ and the per-phase docs (`PHASE4.md` through `PHASE7.5.md`). The
 pre-2.0.0 line is summarised below; the 2.0.0 cut is the first
 release documented in this file.
 
+## [Unreleased]
+
+### Added
+- **`@costlens/cli` — standalone `costlens` CLI** (was a v2 non-goal in
+  MULTI-TOOL.md; shipped early because the `wi` work-item factory needs a
+  query surface). Two commands over `@costlens/core`, no pi/opencode runtime
+  dependency:
+  - `costlens feature <branch> [--json]` — per-feature (git-branch) cost
+    report: total, tokens, byModel, bySource, status/cap. `--json` is what
+    `wi cost` consumes.
+  - `costlens ingest-ccusage --feature <branch> --session <uuid> [--dry-run]`
+    — batch-ingest one Claude Code session (via ccusage) into the ledger,
+    booked to the branch, tagged `source=claude-code`. Idempotent
+    (deterministic `ccusage:<session>:<model>` row ids → INSERT OR REPLACE).
+    Lands Claude cost in the unified ledger without the live watcher (that
+    stays the claude-costlens v2 adapter).
+
 ## [2.0.0] — 2026-07-08
 
 The multi-tool refactor ([MULTI-TOOL.md](./MULTI-TOOL.md)). The
