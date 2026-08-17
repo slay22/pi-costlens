@@ -1,37 +1,19 @@
 {
-  "name": "pi-costlens",
-  "version": "0.7.0",
-  "description": "A pi extension that books the real dollar cost of every assistant message to a feature (git branch), with a local web dashboard, sub-agent cost attribution, native OS notifications, and a search/note/tag/merge lifecycle.",
-  "type": "module",
+  "name": "costlens-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Costlens monorepo — a tool-agnostic cost layer. Today: a pi extension. Tomorrow: opencode and Claude Code. The shared data plane lives in @costlens/core.",
   "license": "MIT",
-  "private": false,
-  "author": "Leo Gutierrez <slay22@users.noreply.github.com>",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/slay22/pi-costlens.git"
+  "type": "module",
+  "engines": {
+    "node": ">=20"
   },
-  "bugs": {
-    "url": "https://github.com/slay22/pi-costlens/issues"
-  },
-  "homepage": "https://github.com/slay22/pi-costlens#readme",
-  "keywords": [
-    "pi-package",
-    "pi",
-    "extension",
-    "ai",
-    "cost-tracking",
-    "llm",
-    "developer-tools",
-    "dashboard"
-  ],
   "scripts": {
-    "test": "node --import tsx --test test/extension.test.ts test/footer.test.ts test/lifecycle.test.ts test/notifications.test.ts",
-    "test:watch": "node --import tsx --test --watch test/extension.test.ts test/footer.test.ts test/lifecycle.test.ts test/notifications.test.ts",
-    "test:server": "bun test test/server.test.ts",
-    "typecheck": "tsc --noEmit"
-  },
-  "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
+    "test": "pnpm -r test",
+    "test:server": "pnpm --filter @costlens/core test:server",
+    "typecheck": "pnpm -r typecheck",
+    "build": "pnpm -r build",
+    "clean": "pnpm -r clean"
   },
   "devDependencies": {
     "@types/node": "^22.7.0",
@@ -39,15 +21,5 @@
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
   },
-  "pi": {
-    "extensions": [
-      "./extension/index.ts"
-    ]
-  },
-  "files": [
-    "extension",
-    "server",
-    "README.md",
-    "LICENSE"
-  ]
+  "packageManager": "pnpm@11.10.0"
 }

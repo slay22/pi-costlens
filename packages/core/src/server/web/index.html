@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Costlens</title>
+  <link rel="stylesheet" href="/vendor/uplot.min.css" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <h1>Costlens</h1>
+    <span class="status" id="conn-status" title="Connection status">…</span>
+    <button id="refresh" type="button">↻ Refresh</button>
+  </header>
+
+  <!-- Phase 9 step 5: one-time welcome banner after the v2
+       migration. Hidden by default; overview.js wires it up. -->
+  <div id="welcome-banner" class="welcome-banner" hidden role="status">
+    <span class="welcome-icon" aria-hidden="true">✨</span>
+    <span class="welcome-text" id="welcome-text"></span>
+    <button type="button" class="welcome-dismiss" id="welcome-dismiss">Dismiss</button>
+  </div>
+
+  <main>
+    <section id="summary" class="card">
+      <div class="stat">
+        <div class="label">Total spent</div>
+        <div class="value" id="stat-cost">$0.00</div>
+      </div>
+      <div class="stat">
+        <div class="label">Total turns</div>
+        <div class="value" id="stat-turns">0</div>
+      </div>
+      <div class="stat">
+        <div class="label">Features</div>
+        <div class="value" id="stat-features">0</div>
+      </div>
+      <div class="stat" id="stat-current-wrap">
+        <div class="label">Current</div>
+        <div class="value" id="stat-current">—</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Features</h2>
+        <div class="search-wrap">
+          <input id="search" type="search" placeholder="filter by name or id…" autocomplete="off" />
+          <span class="search-count" id="search-count"></span>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table id="top-features">
+          <thead>
+            <tr><th>Feature</th><th>Status</th><th>Tags</th><th class="num">Turns</th><th class="num">Cost</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Cost by day (last 30)</h2>
+      <div id="by-day-chart" class="chart"></div>
+      <details class="chart-details">
+        <summary>data</summary>
+        <div class="table-wrap">
+          <table id="by-day">
+            <thead><tr><th>Date</th><th class="num">Turns</th><th class="num">Cost</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </details>
+    </section>
+
+    <section class="card">
+      <h2>Cost by model</h2>
+      <div id="by-model-chart" class="chart"></div>
+      <details class="chart-details">
+        <summary>data</summary>
+        <div class="table-wrap">
+          <table id="by-model">
+            <thead><tr><th>Model</th><th class="num">Turns</th><th class="num">In</th><th class="num">Out</th><th class="num">Cost</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </details>
+    </section>
+
+    <section class="card" id="top-subagents-card" hidden>
+      <h2>Top sub-agents</h2>
+      <p class="muted">Aggregate cost across all features for each sub-agent type (Explore, Plan, custom, …).</p>
+      <div class="table-wrap">
+        <table id="top-subagents">
+          <thead>
+            <tr>
+              <th>Agent</th>
+              <th class="num">Total runs</th>
+              <th class="num">Total cost</th>
+              <th class="num">Avg / run</th>
+              <th class="num">Turns</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Status breakdown</h2>
+      <ul id="by-status" class="status-list"></ul>
+    </section>
+  </main>
+
+  <footer>
+    <span>Costlens v0.7.0 · dogfooded on <code id="current-feature">—</code></span>
+  </footer>
+
+  <script src="/vendor/uplot.iife.min.js"></script>
+  <script src="/overview.js"></script>
+</body>
+</html>

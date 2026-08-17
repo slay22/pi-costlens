@@ -1,0 +1,10 @@
+packages:
+  - "packages/*"
+
+# pnpm 11 moved "onlyBuiltDependencies" out of package.json. The new
+# home is `allowBuilds` here in pnpm-workspace.yaml.
+# - esbuild: tsx needs it (native binary postinstall)
+# - msgpackr-extract: solid-js transitive dep needs it
+allowBuilds:
+  esbuild: true
+  msgpackr-extract: true
