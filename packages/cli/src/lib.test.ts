@@ -46,6 +46,15 @@ test("ccusageSessionToInserts: one row per model, deterministic id, cost mapping
   expect(rows[0].cost_unknown).toBe(0);
 });
 
+test("ccusageSessionToInserts: source override tags rows (codex/gemini/…)", () => {
+  const sess: CcusageSession = { period: "s", modelBreakdowns: [{ modelName: "gpt-5.6-codex", cost: 2, inputTokens: 10 }] };
+  const rows = ccusageSessionToInserts(sess, "wi-1", "now", "codex");
+  expect(rows[0].source).toBe("codex");
+  expect(rows[0].provider).toBe("codex");
+  // default stays claude-code
+  expect(ccusageSessionToInserts(sess, "wi-1", "now")[0].source).toBe(SOURCE_CLAUDE);
+});
+
 test("ccusageSessionToInserts: idempotent id — re-ingest yields same ids (INSERT OR REPLACE)", () => {
   const sess: CcusageSession = { period: "s", modelBreakdowns: [{ modelName: "m", cost: 1, inputTokens: 1 }] };
   const a = ccusageSessionToInserts(sess, "f", "t1");

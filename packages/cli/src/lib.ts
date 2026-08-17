@@ -7,7 +7,9 @@
 
 import type { MessageInsert, Feature } from "@costlens/core";
 
-/** The `source` tag written for every row ingested from Claude Code / ccusage. */
+/** Default `source` tag for ingested rows (Claude Code). ccusage on this
+ *  machine is a multi-agent reader (claude, codex, gemini, …), so the source
+ *  is passed per-ingest; this is only the fallback. */
 export const SOURCE_CLAUDE = "claude-code";
 
 /** Minimal shape of a `ccusage session --json` entry (only the fields we read). */
@@ -60,7 +62,8 @@ export function pickCcusageSession(
 export function ccusageSessionToInserts(
   sess: CcusageSession,
   featureId: string,
-  now: string
+  now: string,
+  source: string = SOURCE_CLAUDE
 ): MessageInsert[] {
   const period = String(sess.period ?? "unknown");
   const ts = sess.metadata?.lastActivity ?? now;
@@ -90,7 +93,7 @@ export function ccusageSessionToInserts(
       feature_id: featureId,
       session_id: period,
       model,
-      provider: SOURCE_CLAUDE,
+      provider: source,
       input_tokens: input,
       output_tokens: output,
       cache_read: cacheRead,
@@ -103,7 +106,7 @@ export function ccusageSessionToInserts(
       cost_unknown: cost === 0 && tokensSpent > 0 ? 1 : 0,
       timestamp: ts,
       branch_path: null,
-      source: SOURCE_CLAUDE,
+      source,
     };
   });
 }

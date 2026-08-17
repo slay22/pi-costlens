@@ -21,12 +21,13 @@ release documented in this file.
   - `costlens feature <branch> [--json]` — per-feature (git-branch) cost
     report: total, tokens, byModel, bySource, status/cap. `--json` is what
     `wi cost` consumes.
-  - `costlens ingest-ccusage --feature <branch> --session <uuid> [--dry-run]`
-    — batch-ingest one Claude Code session (via ccusage) into the ledger,
-    booked to the branch, tagged `source=claude-code`. Idempotent
+  - `costlens ingest-ccusage --feature <branch> --session <uuid> [--source <tag>] [--dry-run]`
+    — batch-ingest one ccusage session into the ledger, booked to the branch.
+    ccusage is a multi-agent reader (claude, codex, gemini, …), so `--source`
+    tags the rows (default `claude-code`; e.g. `codex`). Idempotent
     (deterministic `ccusage:<session>:<model>` row ids → INSERT OR REPLACE).
-    Lands Claude cost in the unified ledger without the live watcher (that
-    stays the claude-costlens v2 adapter).
+    Lands cost for agents without a live adapter into the unified ledger
+    without a watcher (the live watchers stay v2).
 
 ## [2.0.0] — 2026-07-08
 

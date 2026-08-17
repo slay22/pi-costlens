@@ -6,12 +6,13 @@
  *       Per-feature (git-branch) cost report. `--json` for machines
  *       (this is what `wi cost` calls); human summary otherwise.
  *
- *   costlens ingest-ccusage --feature <branch> --session <uuid> [--dry-run]
- *       Batch-ingest one Claude Code session (via ccusage) into the
- *       ledger, booked to the given feature branch, tagged
- *       source=claude-code. Idempotent — re-running replaces, never
- *       double-counts. This is how Claude cost lands in the unified
- *       ledger without a live watcher (that stays costlens v2).
+ *   costlens ingest-ccusage --feature <branch> --session <uuid> [--source <tag>] [--dry-run]
+ *       Batch-ingest one ccusage session into the ledger, booked to the
+ *       given feature branch. ccusage here is a multi-agent reader, so
+ *       --source tags the rows (claude-code default; codex, gemini, …).
+ *       Idempotent — re-running replaces, never double-counts. This is how
+ *       cost for agents without a live costlens adapter lands in the
+ *       unified ledger (the live watchers stay costlens v2).
  *
  * pi and opencode need no ingest — their adapters write live.
  */
@@ -27,6 +28,7 @@ import {
   pickCcusageSession,
   ccusageSessionToInserts,
   shapeFeatureReport,
+  SOURCE_CLAUDE,
   type CcusageSession,
 } from "./lib.ts";
 
@@ -112,8 +114,11 @@ function ensureFeatureRow(id: string, branch: string) {
 function cmdIngestCcusage(flags: Record<string, string>) {
   const branch = flags.feature;
   const session = flags.session;
+  const source = flags.source ?? SOURCE_CLAUDE; // e.g. claude-code, codex, gemini
   if (!branch || !session)
-    throw new Error("usage: costlens ingest-ccusage --feature <branch> --session <uuid> [--dry-run]");
+    throw new Error(
+      "usage: costlens ingest-ccusage --feature <branch> --session <uuid> [--source <tag>] [--dry-run]"
+    );
 
   const proc = Bun.spawnSync(["npx", "-y", "ccusage@latest", "session", "--json"]);
   if (proc.exitCode !== 0)
@@ -124,23 +129,23 @@ function cmdIngestCcusage(flags: Record<string, string>) {
 
   const id = idFor(branch);
   const now = new Date().toISOString();
-  const rows = ccusageSessionToInserts(sess, id, now);
+  const rows = ccusageSessionToInserts(sess, id, now, source);
   const total = rows.reduce((a, r) => a + r.cost_usd, 0);
   const models = rows.map((r) => r.model).join(", ");
 
   if ("dry-run" in flags) {
-    console.log(`(dry-run) would book $${total.toFixed(2)} to ${id} · ${rows.length} row(s) · ${models}`);
+    console.log(`(dry-run) would book $${total.toFixed(2)} to ${id} · ${rows.length} row(s) · ${source} · ${models}`);
     return;
   }
   initDb();
   ensureFeatureRow(id, branch);
   for (const r of rows) recordMessageAndUpdateFeature(r);
-  console.log(`ingested ccusage session ${String(sess.period).slice(0, 8)} → ${id}: $${total.toFixed(2)} · ${models}`);
+  console.log(`ingested ccusage session → ${id}: $${total.toFixed(2)} · ${source} · ${models}`);
 }
 
 const HELP = `costlens — per-feature (git-branch) cost from the shared ledger
   costlens feature <branch> [--json]
-  costlens ingest-ccusage --feature <branch> --session <uuid> [--dry-run]`;
+  costlens ingest-ccusage --feature <branch> --session <uuid> [--source <tag>] [--dry-run]`;
 
 function main() {
   const { positional, flags } = parse(process.argv.slice(2));
