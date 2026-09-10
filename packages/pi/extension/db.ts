@@ -95,9 +95,12 @@ export function initDb(): CoreDatabase {
 
 export function getDb(): CoreDatabase {
   if (!_db) {
-    throw new Error(
-      "Costlens: DB not initialised. Call initDb() first (e.g. from session_start)."
-    );
+    // The extension can be loaded MID-SESSION (fresh install, reload, or a
+    // session that started before the extension was registered), so
+    // session_start may never fire before the first message_end / footer /
+    // command call. initDb() is idempotent and cheap on repeat calls —
+    // initialize lazily on first use instead of throwing.
+    initDb();
   }
   return _db as unknown as CoreDatabase;
 }
