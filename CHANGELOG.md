@@ -50,6 +50,24 @@ release documented in this file.
   - `@costlens/core` gains `projectFeatureFor()` and
     `recomputeFeatureTotals()` (the totals-repair primitive).
 
+### Fixed
+- **Dashboard feature detail page was dead** (`/feature/<id>` rendered every
+  field as its static default — `$0.00`, `0`, `—` — so clicking a row looked
+  like "nothing happens"). `packages/core/src/server/web/feature.js` could not
+  parse, for two reasons committed during the phase-7 × phase-7.5 merge
+  (`c4e87c4`, 2026-07-06): the conflict hunks were committed **with their
+  markers**, and one constructor used TypeScript parameter properties
+  (`constructor(public code, message, public status)`) in a plain `.js` asset.
+  The browser discarded the whole script, so `load()`/`render()` never ran —
+  while the overview page, which uses a different file, stayed healthy.
+  - Resolved the hunk as the union both sides intended (HEAD's
+    `renderSubagents`/`renderTools` + the branch's actions block — `render()`
+    calls all three) and wrote the constructor as plain JS.
+  - New guard `packages/core/src/server/web-assets.test.ts`: every dashboard
+    asset must compile under `node:vm`, and no asset may carry conflict
+    markers. Nothing else in the suite touched these files, which is how this
+    survived two months.
+
 ## [2.0.0] — 2026-07-08
 
 The multi-tool refactor ([MULTI-TOOL.md](./MULTI-TOOL.md)). The

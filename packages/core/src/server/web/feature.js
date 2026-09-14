@@ -301,7 +301,6 @@ function render(f, msgs, subagents, subagentRuns, tools) {
   });
 }
 
-<<<<<<< HEAD
 function renderSubagents(summary, runs) {
   const card = $("#subagents-card");
   if (!summary || summary.length === 0) {
@@ -368,7 +367,6 @@ function renderTools(counts) {
   </tr>`).join("");
 }
 
-=======
 // ---------------------------------------------------------------------------
 // Actions card
 // ---------------------------------------------------------------------------
@@ -484,9 +482,11 @@ async function doWrite(method, path, body) {
 }
 
 class LifecycleApiError extends Error {
-  constructor(public code, message, public status) {
+  constructor(code, message, status) {
     super(message);
     this.name = "LifecycleApiError";
+    this.code = code;
+    this.status = status;
   }
 }
 
@@ -747,7 +747,6 @@ function toast(message, kind = "info", durationMs = 3000) {
 // Helpers
 // ---------------------------------------------------------------------------
 
->>>>>>> feat/phase-7.5-dashboard-actions
 function escape(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
