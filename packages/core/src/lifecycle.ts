@@ -34,7 +34,10 @@
 
 import { getCoreDb } from "./db.js";
 import { getFeature as readFeature } from "./db.js";
+import { readConfig } from "./config.js";
+import { computePricingConfidence } from "./pricing.js";
 import {
+  type CoreDatabase,
   type Feature,
   type GitContext,
   type SessionCtx,
@@ -95,6 +98,36 @@ export function featureIdFor(git: GitContext): string {
 }
 
 /**
+ * Resolve a working directory to a standing project feature (config
+ * `projects`). Longest matching prefix wins, matched on a path
+ * boundary: `/a/b` matches `/a/b` and `/a/b/worktrees/w1`, but never
+ * `/a/bc`. Returns `null` when nothing matches.
+ *
+ * Pure — the caller reads the config and passes the map in, which
+ * keeps this unit-testable without touching the filesystem.
+ */
+export function projectFeatureFor(
+  cwd: string | null | undefined,
+  projects: Record<string, string> | null | undefined
+): string | null {
+  if (!cwd || !projects) return null;
+  const dir = cwd.replace(/\/+$/, "") || "/";
+  let bestKey: string | null = null;
+  let bestValue: string | null = null;
+  for (const [rawKey, value] of Object.entries(projects)) {
+    const key = rawKey.length > 1 ? rawKey.replace(/\/+$/, "") : rawKey;
+    if (!key || !value) continue;
+    const matches = dir === key || dir.startsWith(key === "/" ? "/" : key + "/");
+    if (!matches) continue;
+    if (bestKey === null || key.length > bestKey.length) {
+      bestKey = key;
+      bestValue = value;
+    }
+  }
+  return bestValue;
+}
+
+/**
  * Open or resume a feature for a session:
  *   - if the feature exists and is `open` → resume (no prompt, just
  *     bump `last_activity_at`);
@@ -102,6 +135,13 @@ export function featureIdFor(git: GitContext): string {
  *     → do NOT resume; return `unassigned`;
  *   - if the feature does not exist → if `prompt` returns true (or
  *     there's no UI), create it. Otherwise return `unassigned`.
+ *
+ * Before that, a **standing project assignment** (config `projects`,
+ * keyed by working directory) is consulted — but only when git
+ * resolution lands on `unassigned`, so per-branch features keep their
+ * granularity. A mapped feature is created without prompting (the
+ * mapping is already an explicit decision) and inherits the closed-
+ * feature rule above.
  *
  * Always writes the `sessions` row mapping the session file → the
  * returned feature id, so the next event hook can find it via
@@ -116,7 +156,10 @@ export async function ensureFeatureForSession(
   prompt: () => Promise<boolean>
 ): Promise<string> {
   const db = getCoreDb();
-  const desiredId = featureIdFor(ctx.git);
+  const gitId = featureIdFor(ctx.git);
+  const projectId =
+    gitId === UNASSIGNED_ID ? projectFeatureFor(ctx.cwd, readConfig().projects) : null;
+  const desiredId = projectId ?? gitId;
   const now = new Date().toISOString();
 
   let resolvedId = UNASSIGNED_ID;
@@ -126,7 +169,8 @@ export async function ensureFeatureForSession(
   } else {
     const existing = readFeature(desiredId);
     if (!existing) {
-      const ok = await prompt();
+      // A project mapping is a standing decision → never prompt for it.
+      const ok = projectId ? true : await prompt();
       if (ok) {
         db.prepare(
           `INSERT INTO features
@@ -134,7 +178,7 @@ export async function ensureFeatureForSession(
               started_at, first_activity_at, last_activity_at)
            VALUES
              (?, ?, ?, 'open', 'unknown', ?, ?, ?)`
-        ).run(desiredId, desiredId, ctx.git.branch, now, now, now);
+        ).run(desiredId, desiredId, projectId ? null : ctx.git.branch, now, now, now);
         resolvedId = desiredId;
       } else {
         resolvedId = UNASSIGNED_ID;
@@ -604,6 +648,52 @@ export type MessageInsert = {
    */
   source: string;
 };
+
+/**
+ * Recompute a feature's denormalized totals from its `messages` (and
+ * `subagent_runs`) rows, plus its derived `pricing_conf`.
+ *
+ * `messages` is the source of truth; every pre-computed column on
+ * `features` is a cache of it. `recordMessageAndUpdateFeature` keeps
+ * that cache fresh on the hot path, and this function repairs it
+ * wholesale after rows move between features (e.g. `costlens claim`,
+ * which re-attributes a project's sessions from `unassigned`). Call it
+ * for **both** the gained and the drained feature.
+ */
+export function recomputeFeatureTotals(featureId: string, db: CoreDatabase = getCoreDb()): void {
+  db.exec("BEGIN");
+  try {
+    db.prepare(
+      `UPDATE features
+         SET
+           total_cost_usd    = COALESCE((SELECT SUM(cost_usd)      FROM messages      WHERE feature_id = ?), 0),
+           total_input       = COALESCE((SELECT SUM(input_tokens)  FROM messages      WHERE feature_id = ?), 0),
+           total_output      = COALESCE((SELECT SUM(output_tokens) FROM messages      WHERE feature_id = ?), 0),
+           total_cache_read  = COALESCE((SELECT SUM(cache_read)    FROM messages      WHERE feature_id = ?), 0),
+           total_cache_write = COALESCE((SELECT SUM(cache_write)   FROM messages      WHERE feature_id = ?), 0),
+           turn_count        = COALESCE((SELECT COUNT(*)           FROM messages      WHERE feature_id = ?), 0),
+           subagent_cost_usd = COALESCE((SELECT SUM(cost_usd)      FROM subagent_runs WHERE feature_id = ?), 0),
+           first_activity_at = (SELECT MIN(timestamp) FROM messages WHERE feature_id = ?),
+           last_activity_at  = (SELECT MAX(timestamp) FROM messages WHERE feature_id = ?)
+       WHERE id = ?`
+    ).run(
+      featureId, featureId, featureId, featureId, featureId, featureId,
+      featureId, featureId, featureId, featureId
+    );
+    db.prepare(`UPDATE features SET pricing_conf = ? WHERE id = ?`).run(
+      computePricingConfidence(db, featureId),
+      featureId
+    );
+    db.exec("COMMIT");
+  } catch (err) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // best-effort
+    }
+    throw err;
+  }
+}
 
 /**
  * Insert a `messages` row and recompute the parent feature's

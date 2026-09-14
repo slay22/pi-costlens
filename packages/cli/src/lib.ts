@@ -5,7 +5,8 @@
  * or a live `ccusage` run.
  */
 
-import type { MessageInsert, Feature } from "@costlens/core";
+import type { CoreDatabase, MessageInsert, Feature } from "@costlens/core";
+import { UNASSIGNED_ID, recomputeFeatureTotals } from "@costlens/core";
 
 /** Default `source` tag for ingested rows (Claude Code). ccusage on this
  *  machine is a multi-agent reader (claude, codex, gemini, …), so the source
@@ -123,8 +124,7 @@ export type FeatureReport = {
   bySource: Array<{ source: string; cost: number; turns: number }>;
 };
 
-/** Shape a feature row + its grouped sums into the CLI's stable report object. */
-export function shapeFeatureReport(
+/** Shape a feature row + its grouped sums into the CLI's stable report object. */export function shapeFeatureReport(
   branch: string,
   feature: Feature | undefined,
   byModel: Array<{ model: string; cost: number; turns: number }>,
@@ -146,4 +146,189 @@ export function shapeFeatureReport(
     byModel,
     bySource,
   };
+}
+
+// ---------------------------------------------------------------------------
+// claim — re-attribute a project's sessions to a named feature
+// ---------------------------------------------------------------------------
+
+/**
+ * Create the feature row if it's missing — regardless of status, so cost
+ * stamped AFTER a merge/close still books to the right feature (we must
+ * NOT route to `unassigned` the way ensureFeatureForSession does for
+ * closed features). Existing rows are left untouched.
+ */
+export function ensureFeatureRow(db: CoreDatabase, id: string, branch: string | null): void {
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO features
+       (id, name, branch, status, pricing_conf, started_at, first_activity_at, last_activity_at)
+     VALUES (?, ?, ?, 'open', 'unknown', ?, ?, ?)
+     ON CONFLICT(id) DO NOTHING`
+  ).run(id, id, branch, now, now, now);
+}
+
+export type ClaimOptions = {
+  /** Working directory whose sessions should be re-attributed (absolute). */
+  cwd: string;
+  /** Feature id the sessions are claimed into. */
+  feature: string;
+  /** Only rows currently booked here are moved. Default: `unassigned`. */
+  from?: string;
+  /** Compute and report, write nothing. */
+  dryRun?: boolean;
+};
+
+export type ClaimSummary = {
+  applied: boolean;
+  cwd: string;
+  feature: string;
+  from: string;
+  sessions: number;
+  messages: number;
+  costUsd: number;
+  subagentRuns: number;
+  toolCalls: number;
+  /** Target feature cost/turns after the claim (projected when dry-run). */
+  target: { costUsd: number; turns: number };
+  /** Source feature cost/turns after the claim (projected when dry-run). */
+  source: { costUsd: number; turns: number };
+};
+
+/** `/a/b/` → `/a/b`; `/` stays `/`. */
+function normalizeCwd(p: string): string {
+  return p.replace(/\/+$/, "") || "/";
+}
+
+function featureTotals(db: CoreDatabase, id: string): { costUsd: number; turns: number } {
+  const row = db
+    .prepare(`SELECT total_cost_usd AS cost, turn_count AS turns FROM features WHERE id = ?`)
+    .get(id) as { cost: number; turns: number } | undefined;
+  return { costUsd: row?.cost ?? 0, turns: Number(row?.turns ?? 0) };
+}
+
+/**
+ * Move every session that ran in `cwd` (or below it — worktrees
+ * included) from the `from` feature onto `feature`, and repair both
+ * features' denormalized totals.
+ *
+ * Rows in `sessions` / `messages` are matched by directory; the
+ * feature-owned `subagent_runs` and `tool_calls` rows follow their
+ * parent message. Idempotent: re-running moves nothing the second
+ * time, and it never touches rows already on a named feature (unless
+ * `--from` says otherwise).
+ */
+export function claimLedger(db: CoreDatabase, opts: ClaimOptions): ClaimSummary {
+  const from = opts.from ?? UNASSIGNED_ID;
+  const cwd = normalizeCwd(opts.cwd);
+  const prefix = cwd === "/" ? "/%" : cwd + "/%";
+  const scope = `(cwd = ? OR cwd LIKE ?)`;
+  const inScope = `session_id IN (SELECT id FROM sessions WHERE ${scope})`;
+
+  const sessions = Number(
+    (db.prepare(`SELECT COUNT(*) AS c FROM sessions WHERE ${scope}`).get(cwd, prefix) as {
+      c: number;
+    }).c
+  );
+  const moved = db
+    .prepare(
+      `SELECT COUNT(*) AS c, COALESCE(SUM(cost_usd), 0) AS cost
+         FROM messages WHERE feature_id = ? AND ${inScope}`
+    )
+    .get(from, cwd, prefix) as { c: number; cost: number };
+  const subagentRuns = Number(
+    (
+      db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM subagent_runs
+            WHERE feature_id = ? AND parent_message_id IN (
+              SELECT id FROM messages WHERE feature_id = ? AND ${inScope})`
+        )
+        .get(from, from, cwd, prefix) as { c: number }
+    ).c
+  );
+  const toolCalls = Number(
+    (
+      db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM tool_calls
+            WHERE feature_id = ? AND message_id IN (
+              SELECT id FROM messages WHERE feature_id = ? AND ${inScope})`
+        )
+        .get(from, from, cwd, prefix) as { c: number }
+    ).c
+  );
+
+  const movedMessages = Number(moved.c);
+  const movedCost = Number(moved.cost ?? 0);
+  const beforeTarget = featureTotals(db, opts.feature);
+  const beforeSource = featureTotals(db, from);
+
+  const summary: ClaimSummary = {
+    applied: false,
+    cwd,
+    feature: opts.feature,
+    from,
+    sessions,
+    messages: movedMessages,
+    costUsd: movedCost,
+    subagentRuns,
+    toolCalls,
+    target: beforeTarget,
+    source: beforeSource,
+  };
+
+  if (opts.dryRun) {
+    // Preview only: project the totals instead of writing them.
+    summary.target = {
+      costUsd: beforeTarget.costUsd + movedCost,
+      turns: beforeTarget.turns + movedMessages,
+    };
+    summary.source = {
+      costUsd: Math.max(0, beforeSource.costUsd - movedCost),
+      turns: Math.max(0, beforeSource.turns - movedMessages),
+    };
+    return summary;
+  }
+
+  db.exec("BEGIN");
+  try {
+    ensureFeatureRow(db, opts.feature, null);
+    // Children first, while their parent messages still sit on `from`.
+    db.prepare(
+      `UPDATE subagent_runs SET feature_id = ?
+        WHERE feature_id = ? AND parent_message_id IN (
+          SELECT id FROM messages WHERE feature_id = ? AND ${inScope})`
+    ).run(opts.feature, from, from, cwd, prefix);
+    db.prepare(
+      `UPDATE tool_calls SET feature_id = ?
+        WHERE feature_id = ? AND message_id IN (
+          SELECT id FROM messages WHERE feature_id = ? AND ${inScope})`
+    ).run(opts.feature, from, from, cwd, prefix);
+    db.prepare(
+      `UPDATE messages SET feature_id = ? WHERE feature_id = ? AND ${inScope}`
+    ).run(opts.feature, from, cwd, prefix);
+    db.prepare(`UPDATE sessions SET feature_id = ? WHERE ${scope}`).run(
+      opts.feature,
+      cwd,
+      prefix
+    );
+    db.exec("COMMIT");
+  } catch (err) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // best-effort
+    }
+    throw err;
+  }
+
+  // Totals are caches of the messages table — repair both sides from it.
+  recomputeFeatureTotals(opts.feature, db);
+  recomputeFeatureTotals(from, db);
+
+  summary.applied = true;
+  summary.target = featureTotals(db, opts.feature);
+  summary.source = featureTotals(db, from);
+  return summary;
 }

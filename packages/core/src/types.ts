@@ -240,9 +240,29 @@ export type NotificationConfig = {
   dailyDigestThresholdUsd: number;
 };
 
+/**
+ * Standing per-directory feature assignments: working directory
+ * (absolute path) → feature id. Consulted only when git resolution
+ * lands on `unassigned` (main / develop / detached / no-git), so
+ * branch-derived features keep their per-branch granularity.
+ *
+ * Longest prefix wins, matched on a path boundary (`/a/b` matches
+ * `/a/b` and `/a/b/worktrees/w1`, never `/a/bc`). This is what lets
+ * one project keep its cost out of the global unassigned pool — the
+ * pool mixes every repo worked on a main branch, which makes project
+ * totals indistinguishable. Set it with `costlens claim --map`.
+ */
+export type ProjectFeatureMap = Record<string, string>;
+
 export type CostlensConfig = {
   port: number;
   notifications: NotificationConfig;
+  /**
+   * Optional so pre-existing configs (and tests) that only carry
+   * `port` + `notifications` stay valid; `readConfig()` always
+   * materializes `{}`.
+   */
+  projects?: ProjectFeatureMap;
 };
 
 // ---------------------------------------------------------------------------

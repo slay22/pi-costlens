@@ -25,7 +25,7 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import type { CostlensConfig, NotificationConfig } from "./types.js";
+import type { CostlensConfig, NotificationConfig, ProjectFeatureMap } from "./types.js";
 
 export type { CostlensConfig, NotificationConfig } from "./types.js";
 
@@ -54,6 +54,7 @@ const DEFAULT_NOTIFICATIONS: NotificationConfig = {
 const DEFAULTS: CostlensConfig = {
   port: 7331,
   notifications: { ...DEFAULT_NOTIFICATIONS, thresholds: [...DEFAULT_THRESHOLDS] },
+  projects: {},
 };
 
 export function getConfigPath(): string {
@@ -73,6 +74,7 @@ export function readConfig(): CostlensConfig {
     return {
       port: typeof parsed.port === "number" && parsed.port > 0 ? parsed.port : DEFAULTS.port,
       notifications: mergeNotifications(parsed.notifications),
+      projects: sanitizeProjects(parsed.projects),
     };
   } catch {
     return cloneDefaults();
@@ -92,7 +94,32 @@ function cloneDefaults(): CostlensConfig {
       ...DEFAULT_NOTIFICATIONS,
       thresholds: [...DEFAULT_NOTIFICATIONS.thresholds],
     },
+    projects: {},
   };
+}
+
+/**
+ * Normalize a `projects` block: drop non-string / empty entries and
+ * trailing slashes on keys so `/a/b/` and `/a/b` behave the same.
+ * A malformed value degrades to `{}` (never crash the extension over
+ * config).
+ */
+export function sanitizeProjects(input: unknown): ProjectFeatureMap {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return {};
+  const out: ProjectFeatureMap = {};
+  for (const [rawKey, rawValue] of Object.entries(input as Record<string, unknown>)) {
+    if (typeof rawValue !== "string") continue;
+    const key = stripTrailingSlash(rawKey);
+    const value = rawValue.trim();
+    if (!key || !value) continue;
+    out[key] = value;
+  }
+  return out;
+}
+
+/** `/a/b/` → `/a/b`; `/` stays `/` so a root-level mapping is expressible. */
+export function stripTrailingSlash(p: string): string {
+  return p.length > 1 ? p.replace(/\/+$/, "") : p;
 }
 
 /**

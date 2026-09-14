@@ -236,6 +236,44 @@ Costlens — yesterday (2026-07-02): $4.23 across 12 turns
 
 The digest also fires the native notifier, so you'll see it as a banner even when you're not in the pi TUI.
 
+## Project mapping
+
+`main` / `develop` / detached HEAD / no-git sessions all land in one global
+`unassigned` feature, so every repo you work on a trunk branch shares a single
+line — `wopr $10.58` and `receiptScanner $6.85` collapse into one `$23.83`
+number, and project totals become unreadable.
+
+The `projects` block in `~/.costlens/config.json` maps a working directory to
+a feature id. It is consulted **only** when git resolution would land on
+`unassigned`, so feature branches keep their own per-branch granularity:
+
+```json
+{
+  "port": 7331,
+  "projects": {
+    "/Users/me/Develop/receiptScanner": "receipt-ledger"
+  }
+}
+```
+
+Longest prefix wins, matched on a path boundary (`/a/b` also covers
+`/a/b/worktrees/w1`, never `/a/bc`). The feature is created on first use with
+no "start a feature?" prompt — the mapping is already a decision — and a
+closed mapped feature is not auto-resumed (same rule as branch features).
+
+To move a project's **existing** cost out of the pool and persist the mapping
+in one shot:
+
+```bash
+costlens claim --cwd ~/Develop/receiptScanner --feature receipt-ledger --dry-run
+costlens claim --cwd ~/Develop/receiptScanner --feature receipt-ledger --map
+```
+
+`claim` re-attributes every session that ran in that directory (or below it),
+carries its sub-agent runs and tool calls, and repairs both features' cached
+totals from `messages`. Idempotent — re-running moves nothing the second time
+— and it never touches rows already on a named feature unless `--from` says so.
+
 ## Export format
 
 **JSON** is a single object:

@@ -14,20 +14,36 @@
  *       cost for agents without a live costlens adapter lands in the
  *       unified ledger (the live watchers stay costlens v2).
  *
+ *   costlens claim --cwd <path> --feature <id> [--from <feature>] [--dry-run] [--map]
+ *       Re-attribute every session that ran in <path> (or below it) from
+ *       `--from` (default: unassigned) onto <id>, and repair both features'
+ *       totals. This is the fix for the global unassigned pool: every repo
+ *       worked on a main branch pools there, so project totals become
+ *       indistinguishable. `--map` also writes the standing
+ *       `projects[cwd] = feature` mapping into config.json, so future
+ *       sessions claim themselves (no branch required).
+ *       Idempotent: re-running moves nothing the second time.
+ *
  * pi and opencode need no ingest — their adapters write live.
  */
 
+import { resolve } from "node:path";
 import {
   getFeature,
   getCoreDb,
   recordMessageAndUpdateFeature,
   featureIdFor,
+  readConfig,
+  writeConfig,
+  UNASSIGNED_ID,
 } from "@costlens/core";
 import { initDb, closeDb } from "./db.ts";
 import {
   pickCcusageSession,
   ccusageSessionToInserts,
   shapeFeatureReport,
+  ensureFeatureRow,
+  claimLedger,
   SOURCE_CLAUDE,
   type CcusageSession,
 } from "./lib.ts";
@@ -96,19 +112,9 @@ function cmdFeature(branch: string, flags: Record<string, string>) {
     console.log(`  sources: ${report.bySource.map((s) => `${s.source} $${s.cost.toFixed(2)}`).join(" · ")}`);
 }
 
-/** Create the feature row if it's missing — regardless of status, so cost
- *  stamped AFTER a merge/close still books to the right feature (we must
- *  NOT route to `unassigned` the way ensureFeatureForSession does for
- *  closed features). Existing rows are left untouched. */
-function ensureFeatureRow(id: string, branch: string) {
-  const db = getCoreDb();
-  const now = new Date().toISOString();
-  db.prepare(
-    `INSERT INTO features
-       (id, name, branch, status, pricing_conf, started_at, first_activity_at, last_activity_at)
-     VALUES (?, ?, ?, 'open', 'unknown', ?, ?, ?)
-     ON CONFLICT(id) DO NOTHING`
-  ).run(id, id, branch, now, now, now);
+/** Create the feature row if it's missing — see lib.ts's ensureFeatureRow. */
+function ensureFeatureRowFor(id: string, branch: string) {
+  ensureFeatureRow(getCoreDb(), id, branch);
 }
 
 function cmdIngestCcusage(flags: Record<string, string>) {
@@ -138,14 +144,60 @@ function cmdIngestCcusage(flags: Record<string, string>) {
     return;
   }
   initDb();
-  ensureFeatureRow(id, branch);
+  ensureFeatureRowFor(id, branch);
   for (const r of rows) recordMessageAndUpdateFeature(r);
   console.log(`ingested ccusage session → ${id}: $${total.toFixed(2)} · ${source} · ${models}`);
 }
 
 const HELP = `costlens — per-feature (git-branch) cost from the shared ledger
   costlens feature <branch> [--json]
-  costlens ingest-ccusage --feature <branch> --session <uuid> [--source <tag>] [--dry-run]`;
+  costlens ingest-ccusage --feature <branch> --session <uuid> [--source <tag>] [--dry-run]
+  costlens claim --cwd <path> --feature <id> [--from <feature>] [--dry-run] [--map] [--json]`;
+
+/**
+ * Re-attribute a project's sessions onto a named feature, optionally
+ * persisting the standing mapping so future sessions claim themselves.
+ */
+function cmdClaim(flags: Record<string, string>) {
+  const feature = flags.feature;
+  if (!feature)
+    throw new Error(
+      "usage: costlens claim --cwd <path> --feature <id> [--from <feature>] [--dry-run] [--map] [--json]"
+    );
+  const cwd = resolve(flags.cwd ?? process.cwd());
+  const from = flags.from ?? UNASSIGNED_ID;
+  const dryRun = "dry-run" in flags;
+
+  initDb();
+  const summary = claimLedger(getCoreDb(), { cwd, feature, from, dryRun });
+
+  const mapped = !dryRun && "map" in flags;
+  if (mapped) {
+    const cfg = readConfig();
+    cfg.projects = { ...(cfg.projects ?? {}), [cwd]: feature };
+    writeConfig(cfg);
+  }
+
+  if ("json" in flags) {
+    console.log(JSON.stringify({ ...summary, mapped }));
+    return;
+  }
+
+  const verb = dryRun ? "(dry-run) would claim" : "claimed";
+  console.log(`${verb} ${summary.cwd} → ${summary.feature}`);
+  console.log(
+    `  ${summary.sessions} session(s) · ${summary.messages} message(s) · $${summary.costUsd.toFixed(2)}` +
+      ` · ${summary.subagentRuns} sub-agent run(s) · ${summary.toolCalls} tool call(s)`
+  );
+  if (summary.from !== summary.feature) {
+    console.log(
+      `  ${summary.from}: $${summary.source.costUsd.toFixed(2)} (${summary.source.turns} turns)`
+    );
+  }
+  console.log(`  ${summary.feature}: $${summary.target.costUsd.toFixed(2)} (${summary.target.turns} turns)`);
+  if (mapped) console.log(`  mapped in config.json — future sessions claim automatically`);
+  else if (dryRun && "map" in flags) console.log(`  (--map ignored during --dry-run)`);
+}
 
 function main() {
   const { positional, flags } = parse(process.argv.slice(2));
@@ -156,6 +208,8 @@ function main() {
         return cmdFeature(a, flags);
       case "ingest-ccusage":
         return cmdIngestCcusage(flags);
+      case "claim":
+        return cmdClaim(flags);
       case undefined:
       case "help":
       case "--help":

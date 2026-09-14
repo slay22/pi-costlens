@@ -28,6 +28,27 @@ release documented in this file.
     (deterministic `ccusage:<session>:<model>` row ids → INSERT OR REPLACE).
     Lands cost for agents without a live adapter into the unified ledger
     without a watcher (the live watchers stay v2).
+- **Standing project → feature mapping, and `costlens claim`** — fixes the
+  global `unassigned` pool. Every session on a trunk branch (`main`,
+  `develop`, detached HEAD, no-git) was booked to one shared feature, so
+  per-project totals were indistinguishable (one real ledger: wopr $10.58
+  + receiptScanner $6.85 + FirstAgent $2.56 read as a single $23.83 pool).
+  - `CostlensConfig.projects` — a `cwd → feature id` map in
+    `config.json`. Consulted **only** when git resolution would land on
+    `unassigned`, so feature branches keep their per-branch granularity.
+    Longest prefix wins, matched on a path boundary (`/a/b` covers
+    `/a/b/worktrees/w1`, never `/a/bc`). A mapped feature is created
+    without the "start a feature?" prompt (the mapping is already a
+    decision); a closed mapped feature is not auto-resumed.
+  - `costlens claim --cwd <path> --feature <id> [--from <feature>] [--dry-run] [--map] [--json]`
+    — re-attributes every session that ran in `<path>` (or below it) onto
+    the named feature, carrying its `subagent_runs` and `tool_calls` and
+    repointing `sessions.feature_id`, then repairs both features' cached
+    totals from `messages` (the source of truth). `--map` persists the
+    standing mapping in the same run. Idempotent; never touches rows
+    already on a named feature unless `--from` says so.
+  - `@costlens/core` gains `projectFeatureFor()` and
+    `recomputeFeatureTotals()` (the totals-repair primitive).
 
 ## [2.0.0] — 2026-07-08
 

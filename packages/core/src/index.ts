@@ -44,6 +44,7 @@ export type {
   Overview,
   NotificationConfig,
   CostlensConfig,
+  ProjectFeatureMap,
   GitContext,
   SessionCtx,
 } from "./types.js";
@@ -103,6 +104,7 @@ export {
   _resetForTest,
   // Branch mapping
   featureIdFor,
+  projectFeatureFor,
   ensureFeatureForSession,
   UNASSIGNED_ID,
   // State mutations
@@ -124,6 +126,7 @@ export {
   insertToolCall,
   // Message bookkeeping
   recordMessageAndUpdateFeature,
+  recomputeFeatureTotals,
   type SubagentRunInsert,
   type MessageInsert,
 } from "./lifecycle.js";
@@ -144,6 +147,7 @@ export {
 export {
   readConfig,
   writeConfig,
+  sanitizeProjects,
   getConfigPath,
   getDefaultThresholds,
 } from "./config.js";

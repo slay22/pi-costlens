@@ -2,7 +2,7 @@
   "name": "@costlens/cli",
   "version": "0.1.0",
   "private": true,
-  "description": "Standalone costlens CLI — query per-feature (git-branch) cost from the shared ledger, and batch-ingest Claude Code (ccusage) sessions into it. No pi/opencode runtime dependency; just `costlens feature <branch>`.",
+  "description": "Standalone costlens CLI \u2014 query per-feature (git-branch) cost from the shared ledger, and batch-ingest Claude Code (ccusage) sessions into it. No pi/opencode runtime dependency; just `costlens feature <branch>`.",
   "type": "module",
   "license": "MIT",
   "bin": {
@@ -12,7 +12,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "test": "bun test src/lib.test.ts",
+    "test": "bun test src/lib.test.ts src/claim.test.ts",
     "typecheck": "tsc --noEmit",
     "build": "echo \"cli: no build (TypeScript loaded by Bun)\"",
     "clean": "rm -rf node_modules .tsbuildinfo"
