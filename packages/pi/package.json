@@ -25,8 +25,8 @@
     "dashboard"
   ],
   "scripts": {
-    "test": "node --import tsx --test test/extension.test.ts test/footer.test.ts test/lifecycle.test.ts test/notifications.test.ts test/hooks-subagent.test.ts",
-    "test:watch": "node --import tsx --test --watch test/extension.test.ts test/footer.test.ts test/lifecycle.test.ts test/notifications.test.ts test/hooks-subagent.test.ts",
+    "test": "node --import tsx --test test/extension.test.ts test/server-env.test.ts test/footer.test.ts test/lifecycle.test.ts test/notifications.test.ts test/hooks-subagent.test.ts",
+    "test:watch": "node --import tsx --test --watch test/extension.test.ts test/server-env.test.ts test/footer.test.ts test/lifecycle.test.ts test/notifications.test.ts test/hooks-subagent.test.ts",
     "test:server": "echo \"server tests moved to @costlens/core (run `pnpm --filter @costlens/core test:server`)\" && pnpm --filter @costlens/core test:server",
     "test:all": "npm test && npm run test:server",
     "typecheck": "tsc --noEmit",

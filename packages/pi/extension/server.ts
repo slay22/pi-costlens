@@ -31,6 +31,26 @@ import { dirname as _dirname } from "node:path";
 const COSTLENS_HOME = _dirname(getConfigPath());
 const SERVER_PID_PATH = join(COSTLENS_HOME, "server.pid");
 
+/**
+ * Environment for the spawned dashboard server.
+ *
+ * `COSTLENS_HOME` is the **parent** of the costlens directory in core's
+ * resolution (`$COSTLENS_HOME/costlens`); only when it is *unset* does
+ * core fall back to the dotted `~/.costlens`. So the child must never be
+ * handed a synthesized value: injecting `homedir()` sent it to
+ * `~/costlens` (no dot) and the server died with "Costlens DB not found".
+ *
+ * Pass the user's value through untouched (it's already in `process.env`)
+ * and leave it absent otherwise, so parent and child always resolve the
+ * same directory.
+ */
+export function serverChildEnv(
+  port: number,
+  env: NodeJS.ProcessEnv = process.env
+): NodeJS.ProcessEnv {
+  return { ...env, COSTLENS_PORT: String(port) };
+}
+
 const execFileAsync = promisify(execFile);
 
 let _child: ChildProcess | null = null;
@@ -123,16 +143,7 @@ export async function startServer(opts: { detach: boolean }): Promise<ServerHand
 
   const scriptPath = serverScriptPath();
   const child = spawn("bun", [scriptPath], {
-    env: {
-      ...process.env,
-      // Phase 9 step 3: pass the parent of the new home. With
-      // `COSTLENS_HOME=~`, the child resolves its costlens dir as
-      // `~/.costlens` (the new path) — the migration runs at the
-      // child's startup and the legacy `~/.pi/costlens/` data is
-      // moved into place if needed.
-      COSTLENS_HOME: process.env.COSTLENS_HOME ?? homedir(),
-      COSTLENS_PORT: String(port),
-    },
+    env: serverChildEnv(port),
     detached: opts.detach,
     stdio: ["ignore", "pipe", "pipe"],
   });
