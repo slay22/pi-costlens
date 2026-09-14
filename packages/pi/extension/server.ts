@@ -24,9 +24,9 @@ import { findFreePort } from "@costlens/core";
 
 // `getCostlensHome` is no longer exported from ./config.js
 // (step 2 moved it to @costlens/core's db module). The PID file
-// lives at the legacy `~/.pi/costlens/` path until step 3 migrates
-// it. Compute it from the config file path to avoid a circular
-// re-export through the config shim.
+// sits beside the config file (`~/.costlens/server.pid`); compute
+// it from the config path to avoid a circular re-export through
+// the config shim.
 import { dirname as _dirname } from "node:path";
 const COSTLENS_HOME = _dirname(getConfigPath());
 const SERVER_PID_PATH = join(COSTLENS_HOME, "server.pid");

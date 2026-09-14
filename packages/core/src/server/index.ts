@@ -11,7 +11,7 @@
  * The extension spawns this via the `startServer` helper in
  * `extension/server.ts` with COSTLENS_HOME and COSTLENS_PORT set.
  * If COSTLENS_PORT isn't set, we fall back to the configured port
- * from `~/.pi/costlens/config.json` (default 7331).
+ * from `~/.costlens/config.json` (default 7331).
  */
 
 import { join, dirname } from "node:path";

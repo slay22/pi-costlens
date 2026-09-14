@@ -137,7 +137,7 @@ The dashboard server is a separate Bun process; it spawns on demand via `/featur
 
 ## Data model
 
-`~/.pi/costlens/ledger.db` — a single SQLite file in WAL mode, shared between the extension (writes) and the dashboard server (reads). The extension uses Node's built-in `node:sqlite`; the server uses `bun:sqlite` (readonly). Schema:
+`~/.costlens/ledger.db` — a single SQLite file in WAL mode, shared between the extension (writes) and the dashboard server (reads). The extension uses Node's built-in `node:sqlite`; the server uses `bun:sqlite` (readonly). Schema:
 
 - `features` — one row per feature (id is the branch name, or `unassigned`)
 - `messages` — one row per assistant message, with token + cost breakdown
@@ -184,7 +184,7 @@ Platform commands are best-effort with a 1.5s timeout — if the OS notifier isn
 
 ### Configuration
 
-`~/.pi/costlens/config.json` gains an optional `notifications` block:
+`~/.costlens/config.json` gains an optional `notifications` block:
 
 ```json
 {
@@ -299,7 +299,7 @@ DELETE FROM tags;
 DELETE FROM notes;
 ```
 
-To forget a detached dashboard server, remove `~/.pi/costlens/server.pid`. To fully reset, remove `~/.pi/costlens/`.
+To forget a detached dashboard server, remove `~/.costlens/server.pid`. To fully reset, remove `~/.costlens/`.
 
 ## Layout
 
@@ -315,7 +315,7 @@ costlens/
 │   ├── pricing.ts     # confidence calc
 │   ├── footer.ts      # status bar
 │   ├── server.ts      # dashboard server lifecycle (spawn / kill)
-│   ├── config.ts      # ~/.pi/costlens/config.json (+ notifications block)
+│   ├── config.ts      # ~/.costlens/config.json (+ notifications block)
 │   └── notifications.ts  # native notif + webhook + debounce + daily digest
 ├── server/            # runs in Bun (dashboard)
 │   ├── index.ts       # Bun.serve() entry
